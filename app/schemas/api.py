@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -34,7 +35,7 @@ class RoleOut(ORMModel):
 
 
 class UserOut(ORMModel):
-    id: str
+    id: uuid.UUID
     name: str
     email: str
     status: str
@@ -54,7 +55,7 @@ class ContainerIn(BaseModel):
 
 
 class ContainerOut(ORMModel):
-    id: str
+    id: uuid.UUID
     container_number: str
     iso_code: str | None
     type: str | None
@@ -73,7 +74,7 @@ class ShipmentIn(BaseModel):
 
 
 class DocumentOut(ORMModel):
-    id: str
+    id: uuid.UUID
     type: DocumentType
     filename: str
     status: str
@@ -81,7 +82,7 @@ class DocumentOut(ORMModel):
 
 
 class ShipmentOut(ORMModel):
-    id: str
+    id: uuid.UUID
     origin: str
     destination: str
     dispatched_at: UtcDatetime | None
@@ -100,22 +101,22 @@ class ShipmentDetail(ShipmentOut):
 
 
 class ValidationOut(ORMModel):
-    id: str
+    id: uuid.UUID
     status: ValidationStatus
     details: str = Field(description="Resumo da análise (igual a result.summary)")
     confidence_score: float | None
-    shipment_id: str | None
+    shipment_id: uuid.UUID | None
     result: AnalysisResult
     created_at: UtcDatetime
 
 
 class AlertOut(ORMModel):
-    id: str
+    id: uuid.UUID
     severity: AlertSeverity
     description: str
     status: AlertStatus
-    shipment_id: str | None
-    validation_id: str | None
+    shipment_id: uuid.UUID | None
+    validation_id: uuid.UUID | None
     created_at: UtcDatetime
 
 
@@ -124,10 +125,10 @@ class AlertStatusIn(BaseModel):
 
 
 class ProcessEventOut(ORMModel):
-    id: str
+    id: uuid.UUID
     step: str = Field(description="Ação registrada, ex.: LOGIN, SHIPMENT_CREATED, DOCUMENTS_UPLOADED, VALIDATION")
     status: str = Field(description="SUCCESS, FAILURE ou o status da análise")
     observation: str | None
-    user_id: str | None
-    shipment_id: str | None
+    user_id: uuid.UUID | None
+    shipment_id: uuid.UUID | None
     created_at: UtcDatetime

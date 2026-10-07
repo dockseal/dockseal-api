@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy.orm import Session
 
 from app.agents.compliance_agent import ComplianceAnalyzer
@@ -17,7 +19,7 @@ class ValidationService:
     async def compare_documents(self, documents: list[SourceDocument]) -> AnalysisResult:
         return await self.analyzer.analyze(documents)
 
-    async def validate_shipment(self, shipment: Shipment, user_id: str) -> Validation:
+    async def validate_shipment(self, shipment: Shipment, user_id: uuid.UUID) -> Validation:
         documents = [
             SourceDocument(name=doc.filename, text=doc.extraction.text, declared_type=doc.type.value)
             for doc in shipment.documents
@@ -42,7 +44,7 @@ class ValidationService:
         self.db.commit()
         return validation
 
-    def save_validation(self, result: AnalysisResult, shipment_id: str | None = None) -> Validation:
+    def save_validation(self, result: AnalysisResult, shipment_id: uuid.UUID | None = None) -> Validation:
         validation = Validation(
             status=result.status.value,
             details=result.summary,
@@ -53,7 +55,7 @@ class ValidationService:
         self.db.add(validation)
         return validation
 
-    def generate_alerts(self, validation: Validation, result: AnalysisResult, shipment_id: str | None) -> list[Alert]:
+    def generate_alerts(self, validation: Validation, result: AnalysisResult, shipment_id: uuid.UUID | None) -> list[Alert]:
         alerts = [
             Alert(
                 severity=div.severity.value,

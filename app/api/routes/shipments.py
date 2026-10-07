@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -23,7 +24,7 @@ Writer = Annotated[User, Depends(require_permission(Permissions.SHIPMENT_WRITE))
 Reader = Annotated[User, Depends(require_permission(Permissions.SHIPMENT_READ))]
 
 
-def get_shipment_or_404(db: DbSession, shipment_id: str) -> Shipment:
+def get_shipment_or_404(db: DbSession, shipment_id: uuid.UUID) -> Shipment:
     shipment = db.get(Shipment, shipment_id)
     if shipment is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Embarque não encontrado")
@@ -75,7 +76,7 @@ def list_shipments(db: DbSession, _: Reader, limit: int = 50, offset: int = 0):
     summary="Detalhar embarque (com documentos)",
     responses={404: {"description": "Embarque não encontrado"}},
 )
-def get_shipment(db: DbSession, _: Reader, shipment_id: str):
+def get_shipment(db: DbSession, _: Reader, shipment_id: uuid.UUID):
     return get_shipment_or_404(db, shipment_id)
 
 
@@ -85,7 +86,7 @@ def get_shipment(db: DbSession, _: Reader, shipment_id: str):
     summary="Associar ou trocar o contêiner",
     responses={404: {"description": "Embarque não encontrado"}},
 )
-def associate_container(db: DbSession, user: Writer, shipment_id: str, data: ContainerIn):
+def associate_container(db: DbSession, user: Writer, shipment_id: uuid.UUID, data: ContainerIn):
     shipment = get_shipment_or_404(db, shipment_id)
     shipment.container = get_or_create_container(db, data)
     register_event(
@@ -110,7 +111,7 @@ def associate_container(db: DbSession, user: Writer, shipment_id: str, data: Con
 async def upload_documents(
     db: DbSession,
     user: Annotated[User, Depends(require_permission(Permissions.DOCUMENT_UPLOAD))],
-    shipment_id: str,
+    shipment_id: uuid.UUID,
     files: Annotated[list[UploadFile], File()],
     types: Annotated[list[DocumentType] | None, Form(description="Tipo de cada arquivo, na mesma ordem")] = None,
 ):
@@ -123,7 +124,7 @@ async def upload_documents(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Informe um tipo para cada arquivo")
 
     uploads = await extract_uploads(files, ExtractionService())
-    folder = get_settings().upload_dir / shipment.id
+    folder = get_settings().upload_dir / str(shipment.id)
     folder.mkdir(parents=True, exist_ok=True)
 
     documents = []
@@ -162,7 +163,7 @@ async def validate_shipment(
     db: DbSession,
     user: Annotated[User, Depends(require_permission(Permissions.ANALYSIS_RUN))],
     analyzer: Annotated[ComplianceAnalyzer, Depends(get_analyzer)],
-    shipment_id: str,
+    shipment_id: uuid.UUID,
 ):
     """Compara todos os documentos do embarque, salva o resultado, gera alertas (severidade MEDIA ou maior)
     e atualiza o status do embarque. Leva de 10 a 40 segundos.
@@ -185,7 +186,7 @@ async def validate_shipment(
     summary="Histórico de validações do embarque",
     responses={404: {"description": "Embarque não encontrado"}},
 )
-def list_validations(db: DbSession, _: Reader, shipment_id: str):
+def list_validations(db: DbSession, _: Reader, shipment_id: uuid.UUID):
     get_shipment_or_404(db, shipment_id)
     query = select(Validation).where(Validation.shipment_id == shipment_id).order_by(Validation.created_at.desc())
     return db.scalars(query).all()

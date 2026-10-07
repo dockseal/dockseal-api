@@ -1,4 +1,5 @@
 import io
+import uuid
 
 from docx import Document as DocxDocument
 
@@ -9,6 +10,27 @@ def docx_bytes(text: str) -> bytes:
     buffer = io.BytesIO()
     doc.save(buffer)
     return buffer.getvalue()
+
+
+def test_password_is_stored_as_argon2_hash(session_factory):
+    from sqlalchemy import select
+
+    from app.models import User
+
+    with session_factory() as db:
+        user = db.scalar(select(User).where(User.email == "operador@dockseal.com"))
+    assert user.password_hash.startswith("$argon2id$")
+    assert "senha123" not in user.password_hash
+
+
+def test_ids_are_uuids(client, operator_headers):
+    response = client.get("/auth/me", headers=operator_headers)
+    assert uuid.UUID(response.json()["id"]).version == 4
+
+
+def test_invalid_uuid_is_rejected(client, operator_headers):
+    assert client.get("/shipments/123", headers=operator_headers).status_code == 422
+    assert client.get(f"/shipments/{uuid.uuid4()}", headers=operator_headers).status_code == 404
 
 
 def test_login_with_invalid_password(client):

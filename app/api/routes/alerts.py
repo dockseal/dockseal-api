@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -24,7 +25,7 @@ def list_alerts(
     _: Annotated[User, Depends(require_permission(Permissions.ALERT_READ))],
     status_filter: Annotated[AlertStatus | None, Query(alias="status")] = None,
     severity: AlertSeverity | None = None,
-    shipment_id: str | None = None,
+    shipment_id: uuid.UUID | None = None,
 ):
     """Ordenados por criticidade (CRITICA primeiro) e depois pelos mais recentes. Todos os filtros são opcionais."""
     query = select(Alert).order_by(SEVERITY_ORDER, Alert.created_at.desc())
@@ -46,7 +47,7 @@ def list_alerts(
 def update_alert(
     db: DbSession,
     user: Annotated[User, Depends(require_permission(Permissions.ALERT_MANAGE))],
-    alert_id: str,
+    alert_id: uuid.UUID,
     data: AlertStatusIn,
 ):
     """Corpo JSON: `{"status": "OPEN" | "RESOLVED" | "CLOSED"}`."""
@@ -54,7 +55,7 @@ def update_alert(
     if alert is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Alerta não encontrado")
     {"OPEN": alert.open, "RESOLVED": alert.resolve, "CLOSED": alert.close}[data.status]()
-    register_event(db, f"ALERT_{data.status}", user_id=user.id, shipment_id=alert.shipment_id, observation=alert.id)
+    register_event(db, f"ALERT_{data.status}", user_id=user.id, shipment_id=alert.shipment_id, observation=str(alert.id))
     db.commit()
     return alert
 
@@ -63,7 +64,7 @@ def update_alert(
 def list_events(
     db: DbSession,
     _: Annotated[User, Depends(require_permission(Permissions.HISTORY_READ))],
-    shipment_id: str | None = None,
+    shipment_id: uuid.UUID | None = None,
     limit: int = 100,
 ):
     """Mais recentes primeiro. Registra logins, cadastros, uploads, análises e mudanças de alertas."""

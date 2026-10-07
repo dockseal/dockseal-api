@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,8 +15,8 @@ class ProcessEvent(IdMixin, TimestampMixin, Base):
     step: Mapped[str] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(30))
     observation: Mapped[str | None] = mapped_column(Text)
-    user_id: Mapped[str | None] = mapped_column(ForeignKey("user.id"))
-    shipment_id: Mapped[str | None] = mapped_column(ForeignKey("shipment.id"))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("user.id"))
+    shipment_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("shipment.id"))
 
 
 class Job(IdMixin, TimestampMixin, Base):

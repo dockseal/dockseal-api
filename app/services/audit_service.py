@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy.orm import Session
 
 from app.models import ProcessEvent
@@ -8,8 +10,8 @@ def register_event(
     step: str,
     status: str = "SUCCESS",
     *,
-    user_id: str | None = None,
-    shipment_id: str | None = None,
+    user_id: uuid.UUID | None = None,
+    shipment_id: uuid.UUID | None = None,
     observation: str | None = None,
 ) -> ProcessEvent:
     """Registra um evento na trilha de auditoria. Não faz commit: entra na transação de quem chamou."""

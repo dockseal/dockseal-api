@@ -51,9 +51,9 @@ class AuthenticationService:
     def authenticate(self, email: str, password: str) -> str | None:
         """Retorna o token JWT se as credenciais forem válidas."""
         user = self.db.scalar(select(User).where(User.email == email.lower()))
-        if user is None or not user.is_active or not verify_password(password, user.password):
+        if user is None or not user.is_active or not verify_password(password, user.password_hash):
             return None
-        return create_access_token(user.id)
+        return create_access_token(str(user.id))
 
     @staticmethod
     def authorize(user: User, permission: str) -> bool:
@@ -63,7 +63,7 @@ class AuthenticationService:
         role = self.db.scalar(select(Role).where(Role.name == role_name))
         if role is None:
             raise ValueError(f"Perfil inexistente: {role_name}")
-        user = User(name=name, email=email.lower(), password=hash_password(password), role=role)
+        user = User(name=name, email=email.lower(), password_hash=hash_password(password), role=role)
         self.db.add(user)
         self.db.commit()
         return user

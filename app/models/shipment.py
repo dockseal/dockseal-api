@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from enum import StrEnum
 
@@ -45,7 +46,7 @@ class Shipment(IdMixin, TimestampMixin, Base):
     expected_return: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(30), default="REGISTERED")
-    container_id: Mapped[str | None] = mapped_column(ForeignKey("container.id"))
+    container_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("container.id"))
 
     container: Mapped[Container | None] = relationship(back_populates="shipments", lazy="joined")
     documents: Mapped[list["Document"]] = relationship(back_populates="shipment", cascade="all, delete-orphan")
@@ -62,7 +63,7 @@ class Document(IdMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(30), default="UPLOADED")
     filename: Mapped[str] = mapped_column(String(255))
     url: Mapped[str] = mapped_column(String(500))
-    shipment_id: Mapped[str] = mapped_column(ForeignKey("shipment.id"))
+    shipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("shipment.id"))
 
     shipment: Mapped[Shipment] = relationship(back_populates="documents")
     extraction: Mapped["Extraction | None"] = relationship(back_populates="document", uselist=False)
@@ -75,7 +76,7 @@ class Evidence(IdMixin, TimestampMixin, Base):
     mime_type: Mapped[str] = mapped_column(String(100))
     url: Mapped[str] = mapped_column(String(500))
     location: Mapped[str | None] = mapped_column(String(150))
-    shipment_id: Mapped[str] = mapped_column(ForeignKey("shipment.id"))
+    shipment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("shipment.id"))
 
     shipment: Mapped[Shipment] = relationship(back_populates="evidences")
 
@@ -88,7 +89,7 @@ class Extraction(IdMixin, TimestampMixin, Base):
     text: Mapped[str] = mapped_column(Text)
     confidence_score: Mapped[float | None]
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    evidence_id: Mapped[str | None] = mapped_column(ForeignKey("evidence.id"))
-    document_id: Mapped[str | None] = mapped_column(ForeignKey("document.id"))
+    evidence_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("evidence.id"))
+    document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("document.id"))
 
     document: Mapped[Document | None] = relationship(back_populates="extraction")

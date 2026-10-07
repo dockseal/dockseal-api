@@ -42,7 +42,7 @@ Sugestão de variável no front: `VITE_API_URL=http://localhost:8000`.
 
 ## 2. Convenções
 
-- **IDs** são UUIDs em texto (`"b115cff4-9ec1-4fa2-bba1-f8584cab877f"`).
+- **IDs** são UUIDs v4 em texto (`"b115cff4-9ec1-4fa2-bba1-f8584cab877f"`). Um ID que não seja UUID válido na URL retorna `422`; um UUID válido que não existe retorna `404`.
 - **Datas** chegam sempre em ISO 8601 UTC com `Z` (`"2026-10-03T10:00:00Z"`). Para exibir, use `new Date(valor).toLocaleString("pt-BR")`. Ao enviar, mande ISO com `Z` (`date.toISOString()`).
 - **Enums** chegam como texto em maiúsculas (`"PENDING_REVIEW"`, `"CRITICA"`). As tabelas de tradução para a tela estão em [Tipos TypeScript](#6-tipos-typescript).
 - **Erros** sempre têm o campo `detail` (ver [Erros](#7-erros)).

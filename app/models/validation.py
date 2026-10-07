@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import JSON, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,8 +15,8 @@ class Validation(IdMixin, TimestampMixin, Base):
     details: Mapped[str] = mapped_column(Text)
     result: Mapped[dict] = mapped_column(JSON)
     confidence_score: Mapped[float | None]
-    extraction_id: Mapped[str | None] = mapped_column(ForeignKey("extraction.id"))
-    shipment_id: Mapped[str | None] = mapped_column(ForeignKey("shipment.id"))
+    extraction_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("extraction.id"))
+    shipment_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("shipment.id"))
 
     alerts: Mapped[list["Alert"]] = relationship(back_populates="validation")
 
@@ -25,8 +27,8 @@ class Alert(IdMixin, TimestampMixin, Base):
     severity: Mapped[str] = mapped_column(String(20))
     description: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="OPEN")
-    shipment_id: Mapped[str | None] = mapped_column(ForeignKey("shipment.id"))
-    validation_id: Mapped[str | None] = mapped_column(ForeignKey("validation.id"))
+    shipment_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("shipment.id"))
+    validation_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("validation.id"))
 
     validation: Mapped[Validation | None] = relationship(back_populates="alerts")
 

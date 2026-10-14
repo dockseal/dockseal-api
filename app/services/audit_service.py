@@ -1,5 +1,6 @@
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import ProcessEvent
@@ -20,3 +21,15 @@ def register_event(
     )
     db.add(event)
     return event
+
+
+def list_events(
+    db: Session,
+    *,
+    shipment_id: uuid.UUID | None = None,
+    limit: int = 100,
+) -> list[ProcessEvent]:
+    query = select(ProcessEvent).order_by(ProcessEvent.created_at.desc()).limit(limit)
+    if shipment_id is not None:
+        query = query.where(ProcessEvent.shipment_id == shipment_id)
+    return list(db.scalars(query).all())

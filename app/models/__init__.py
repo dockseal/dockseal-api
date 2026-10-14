@@ -1,5 +1,14 @@
 from app.models.process import Job, ProcessEvent
-from app.models.shipment import Container, Document, DocumentType, Evidence, EvidenceType, Extraction, Shipment
+from app.models.shipment import (
+    Container,
+    Document,
+    DocumentType,
+    Evidence,
+    EvidenceType,
+    Extraction,
+    Shipment,
+    ShipmentContainer,
+)
 from app.models.user import Permission, Role, User
 from app.models.validation import Alert, Validation
 
@@ -16,6 +25,7 @@ __all__ = [
     "ProcessEvent",
     "Role",
     "Shipment",
+    "ShipmentContainer",
     "User",
     "Validation",
 ]

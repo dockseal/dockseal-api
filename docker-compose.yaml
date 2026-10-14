@@ -1,0 +1,48 @@
+name: dockseal
+
+services:
+  dockseal-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dockseal-api
+    container_name: dockseal-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://dockseal:dockseal@dockseal-db:5432/dockseal
+    volumes:
+      - .:/app
+      - dockseal-venv:/app/.venv
+    depends_on:
+      dockseal-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  dockseal-db:
+    image: postgres:17-alpine
+    container_name: dockseal-db
+    environment:
+      POSTGRES_USER: dockseal
+      POSTGRES_PASSWORD: dockseal
+      POSTGRES_DB: dockseal
+    ports:
+      - "5432:5432"
+    volumes:
+      - dockseal-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dockseal -d dockseal"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dockseal-venv:
+  dockseal-postgres:

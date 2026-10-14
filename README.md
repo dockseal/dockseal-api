@@ -14,6 +14,7 @@ O ponto central é um agente de IA (Agno + OpenAI) que lê um ou mais documentos
 - [Pré-requisitos](#pré-requisitos)
 - [Configuração](#configuração)
 - [Rodando a aplicação](#rodando-a-aplicação)
+- [Rodando com Docker](#rodando-com-docker)
 - [Perfis e permissões](#perfis-e-permissões)
 - [Usando a API](#usando-a-api)
   - [Pelo navegador (Swagger)](#pelo-navegador-swagger)
@@ -66,11 +67,13 @@ cp .env.example .env
 | `OPENAI_CHAT_MODEL` | Não | Modelo usado pelo agente | `gpt-4.1-mini` |
 | `OPENAI_OCR_MODEL` | Não | Modelo usado no OCR | `gpt-4.1` |
 
-Para gerar um `JWT_SECRET`:
+Para gerar um `JWT_SECRET` fora do Docker:
 
 ```bash
 python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
+
+Com Docker, use o comando da seção [Rodando com Docker](#rodando-com-docker). O valor não pode ficar vazio.
 
 > **PostgreSQL:** rode `uv add "psycopg[binary]"` e defina
 > `DATABASE_URL=postgresql+psycopg://usuario:senha@localhost:5432/dockseal`.
@@ -118,6 +121,57 @@ Para verificar se a API está no ar:
 curl localhost:8000/health
 # {"status":"ok"}
 ```
+
+## Rodando com Docker
+
+Sobe a API e o PostgreSQL sem instalar Python na máquina. O fluxo com `uv` acima continua válido.
+
+Pré-requisito: Docker com Compose.
+
+**1. Criar o `.env`** (o mesmo arquivo do fluxo local):
+
+```bash
+cp .env.example .env
+```
+
+**2. Preencher `OPENAI_API_KEY` e `JWT_SECRET`.** Gere o segredo com o Python da imagem, sem instalar nada na máquina. Na primeira vez o Compose constrói a API; o banco não sobe:
+
+```bash
+docker compose run --rm --no-deps dockseal-api python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Cole a saída em `JWT_SECRET`. Se ficar vazio, o Compose envia essa chave vazia ao container e o login falha. O `DATABASE_URL` do `.env` vale para o fluxo com `uv`; o Compose usa PostgreSQL e não lê esse valor.
+
+**3. Subir os serviços:**
+
+```bash
+docker compose up --build
+```
+
+A API fica em **http://localhost:8000** e o Postgres em **localhost:5432** (`dockseal` / `dockseal`, banco `dockseal`). Alterações no código recarregam sozinhas. Se mudar o `.env` com a API já no ar, recrie o container para ele ler o arquivo de novo: `docker compose up -d --force-recreate dockseal-api`.
+
+**4. Criar usuários** em outro terminal, com os containers no ar:
+
+```bash
+docker compose exec dockseal-api uv run python -m app.cli create-user "Operador Teste" operador@dockseal.com senha123 OPERADOR
+docker compose exec dockseal-api uv run python -m app.cli create-user "Gestor Teste" gestor@dockseal.com senha123 GESTOR
+```
+
+**5. Testes**, dentro do container:
+
+```bash
+docker compose exec dockseal-api uv run pytest
+```
+
+Outros comandos:
+
+```bash
+docker compose logs -f dockseal-api
+docker compose down
+docker compose down -v
+```
+
+`down` preserva o banco. `down -v` apaga os volumes `dockseal-postgres` e `dockseal-venv`.
 
 ## Perfis e permissões
 

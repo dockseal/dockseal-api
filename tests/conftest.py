@@ -83,8 +83,12 @@ def client(session_factory, analyzer, tmp_path, monkeypatch):
 
     main_module.app.dependency_overrides[get_db] = override_db
     main_module.app.dependency_overrides[get_analyzer] = lambda: analyzer
+    from app.api.routes.dashboard import clear_dashboard_cache
+
+    clear_dashboard_cache()
     with TestClient(main_module.app) as c:
         yield c
+    clear_dashboard_cache()
     main_module.app.dependency_overrides.clear()
 
 

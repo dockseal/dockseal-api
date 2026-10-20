@@ -6,6 +6,8 @@ Uso: uv run python -m app.cli create-user "Nome" email@exemplo.com senha OPERADO
 import argparse
 
 from app.core.database import Base, SessionLocal, engine
+from app.core.schema_migration import ensure_schema
+from app.core.security import validate_new_password
 from app.services.auth_service import ROLE_PERMISSIONS, AuthenticationService, seed_roles
 
 
@@ -19,7 +21,13 @@ def main() -> None:
     create.add_argument("role", choices=list(ROLE_PERMISSIONS))
     args = parser.parse_args()
 
+    try:
+        validate_new_password(args.password)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
     Base.metadata.create_all(engine)
+    ensure_schema(engine)
     with SessionLocal() as db:
         seed_roles(db)
         user = AuthenticationService(db).create_user(args.name, args.email, args.password, args.role)

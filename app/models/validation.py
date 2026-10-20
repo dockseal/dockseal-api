@@ -27,6 +27,7 @@ class Alert(IdMixin, TimestampMixin, Base):
     severity: Mapped[str] = mapped_column(String(20))
     description: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="OPEN")
+    resolution_note: Mapped[str | None] = mapped_column(Text)
     shipment_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("shipment.id"))
     validation_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("validation.id"))
 
@@ -40,3 +41,6 @@ class Alert(IdMixin, TimestampMixin, Base):
 
     def close(self) -> None:
         self.status = "CLOSED"
+
+    def dismiss(self) -> None:
+        self.status = "DISMISSED"

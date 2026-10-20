@@ -93,11 +93,11 @@ uv run python -m app.cli create-user "<nome>" <email> <senha> <PERFIL>
 Exemplos:
 
 ```bash
-uv run python -m app.cli create-user "Operador Teste" operador@dockseal.com senha123 OPERADOR
-uv run python -m app.cli create-user "Gestor Teste" gestor@dockseal.com senha123 GESTOR
+uv run python -m app.cli create-user "Operador Teste" operador@dockseal.com 'Password@123' OPERADOR
+uv run python -m app.cli create-user "Gestor Teste" gestor@dockseal.com 'Password@123' GESTOR
 ```
 
-Os perfis válidos são `OPERADOR`, `GESTOR` e `ADMIN`.
+Os perfis válidos são `OPERADOR`, `GESTOR` e `ADMIN`. A senha de um usuário novo precisa ter no mínimo 8 caracteres, com maiúscula, minúscula, número e caractere especial. Usuários já cadastrados continuam válidos.
 
 ## Rodando a aplicação
 
@@ -153,8 +153,8 @@ A API fica em **http://localhost:8000** e o Postgres em **localhost:5432** (`doc
 **4. Criar usuários** em outro terminal, com os containers no ar:
 
 ```bash
-docker compose exec dockseal-api uv run python -m app.cli create-user "Operador Teste" operador@dockseal.com senha123 OPERADOR
-docker compose exec dockseal-api uv run python -m app.cli create-user "Gestor Teste" gestor@dockseal.com senha123 GESTOR
+docker compose exec dockseal-api uv run python -m app.cli create-user "Operador Teste" operador@dockseal.com 'Password@123' OPERADOR
+docker compose exec dockseal-api uv run python -m app.cli create-user "Gestor Teste" gestor@dockseal.com 'Password@123' GESTOR
 ```
 
 **5. Testes**, dentro do container:
@@ -204,13 +204,13 @@ Os exemplos abaixo usam `curl` no terminal.
 
 ```bash
 curl -X POST localhost:8000/auth/login \
-  -d "username=operador@dockseal.com&password=senha123"
+  -d "username=operador@dockseal.com&password=Password@123"
 ```
 
 Resposta:
 
 ```json
-{ "access_token": "eyJhbGciOi...", "token_type": "bearer" }
+{ "access_token": "eyJhbGciOi...", "token_type": "bearer", "refresh_token": "eyJhbGciOi...", "user": { "id": "uuid", "name": "Operador Teste", "role": "OPERADOR" } }
 ```
 
 **Todas as outras rotas** (menos `/health`) exigem o cabeçalho:
@@ -223,7 +223,7 @@ Para guardar o token numa variável:
 
 ```bash
 TOKEN=$(curl -s -X POST localhost:8000/auth/login \
-  -d "username=operador@dockseal.com&password=senha123" \
+  -d "username=operador@dockseal.com&password=Password@123" \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
 ```
 

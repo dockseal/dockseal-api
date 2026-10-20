@@ -147,3 +147,278 @@ def test_dates_are_returned_in_utc(client, operator_headers):
 def test_alerts_filter_by_status(client, manager_headers):
     assert client.get("/alerts", headers=manager_headers, params={"status": "OPEN"}).status_code == 200
     assert client.get("/alerts", headers=manager_headers, params={"status": "XYZ"}).status_code == 422
+
+
+def test_expected_arrival_in_the_past_is_rejected(client, operator_headers):
+    response = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã", "expected_arrival": "2020-01-01T00:00:00Z"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Data de chegada prevista não pode ser anterior a hoje"
+
+
+def test_shipment_accepts_custom_id_company_and_future_arrival(client, operator_headers):
+    response = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={
+            "origin": "Santos",
+            "destination": "Roterdã",
+            "shipment_id_custom": "SHP-2026-1",
+            "transport_company": "MSC",
+            "expected_arrival": "2099-01-01T00:00:00Z",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["shipment_id_custom"] == "SHP-2026-1"
+    assert body["transport_company"] == "MSC"
+    assert body["expected_arrival"] == "2099-01-01T00:00:00Z"
+
+    duplicate = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã", "shipment_id_custom": "SHP-2026-1"},
+    )
+    assert duplicate.status_code == 422
+    assert duplicate.json()["detail"] == "Identificador de embarque já cadastrado"
+
+
+def test_container_must_match_iso_6346(client, operator_headers):
+    response = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã", "container": {"container_number": "ABC123"}},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Número de contêiner inválido. Use o padrão ISO 6346: 4 letras e 7 números."
+
+
+def test_container_in_transit_on_another_open_shipment_is_rejected(client, operator_headers, session_factory):
+    from datetime import UTC, datetime
+
+    from app.models import Shipment
+
+    first = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã"},
+    )
+    assert first.status_code == 201, first.text
+    first_id = first.json()["id"]
+    attached = client.post(
+        f"/shipments/{first_id}/containers",
+        headers=operator_headers,
+        json={"container_number": "MSCU7742123"},
+    )
+    assert attached.status_code == 200, attached.text
+
+    second = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã"},
+    )
+    second_id = second.json()["id"]
+    blocked = client.post(
+        f"/shipments/{second_id}/containers",
+        headers=operator_headers,
+        json={"container_number": "MSCU7742123"},
+    )
+    assert blocked.status_code == 422
+    assert blocked.json()["detail"] == "Contêiner já está em trânsito em outro embarque"
+
+    added = client.post(
+        f"/shipments/{first_id}/containers",
+        headers=operator_headers,
+        json={"container_number": "MSCU7742124"},
+    )
+    assert added.status_code == 200, added.text
+    body = added.json()
+    assert body["container"]["container_number"] == "MSCU7742123"
+    assert [item["container_number"] for item in body["containers"]] == ["MSCU7742123", "MSCU7742124"]
+
+    repeated = client.post(
+        f"/shipments/{first_id}/containers",
+        headers=operator_headers,
+        json={"container_number": "MSCU7742124"},
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert len(repeated.json()["containers"]) == 2
+
+    with session_factory() as db:
+        shipment = db.get(Shipment, uuid.UUID(first_id))
+        shipment.returned_at = datetime.now(UTC)
+        db.commit()
+
+    third = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã"},
+    )
+    reused = client.post(
+        f"/shipments/{third.json()['id']}/containers",
+        headers=operator_headers,
+        json={"container_number": "MSCU7742123"},
+    )
+    assert reused.status_code == 200, reused.text
+
+    replaced = client.put(
+        f"/shipments/{first_id}/container",
+        headers=operator_headers,
+        json={"container_number": "MSCU7742125"},
+    )
+    assert replaced.status_code == 200, replaced.text
+    replaced_body = replaced.json()
+    assert replaced_body["container"]["container_number"] == "MSCU7742125"
+    assert [item["container_number"] for item in replaced_body["containers"]] == [
+        "MSCU7742123",
+        "MSCU7742124",
+        "MSCU7742125",
+    ]
+
+
+def test_dismiss_alert_stores_resolution_note(client, manager_headers, session_factory):
+    from app.models import Alert
+
+    with session_factory() as db:
+        alert = Alert(severity="ALTA", description="Lacre divergente", status="OPEN")
+        db.add(alert)
+        db.commit()
+        alert_id = str(alert.id)
+
+    response = client.patch(
+        f"/alerts/{alert_id}",
+        headers=manager_headers,
+        json={"status": "DISMISSED", "resolution_note": "Falso positivo"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "DISMISSED"
+    assert body["resolution_note"] == "Falso positivo"
+    assert body["updated_at"]
+
+    listed = client.get("/alerts", headers=manager_headers, params={"status": "DISMISSED"}).json()
+    assert any(item["id"] == alert_id for item in listed)
+
+
+def test_shipment_events_are_newest_first_and_restricted(client, operator_headers, manager_headers):
+    shipment = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã"},
+    )
+    shipment_id = shipment.json()["id"]
+    upload = client.post(
+        f"/shipments/{shipment_id}/documents",
+        headers=operator_headers,
+        files=[("files", ("bl.txt", b"Peso: 1 kg", "text/plain"))],
+    )
+    assert upload.status_code == 201, upload.text
+
+    events = client.get(f"/shipments/{shipment_id}/events", headers=manager_headers)
+    assert events.status_code == 200, events.text
+    assert [item["step"] for item in events.json()][:2] == ["DOCUMENTS_UPLOADED", "SHIPMENT_CREATED"]
+    assert client.get(f"/shipments/{uuid.uuid4()}/events", headers=manager_headers).status_code == 404
+    assert client.get(f"/shipments/{shipment_id}/events", headers=operator_headers).status_code == 403
+
+
+def test_login_returns_refresh_token_and_user(client):
+    response = client.post("/auth/login", data={"username": "operador@dockseal.com", "password": "senha123"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["token_type"] == "bearer"
+    assert body["refresh_token"]
+    assert body["user"]["role"] == "OPERADOR"
+    assert uuid.UUID(body["user"]["id"]).version == 4
+
+    refreshed = client.post("/auth/refresh", json={"refresh_token": body["refresh_token"]})
+    assert refreshed.status_code == 200, refreshed.text
+    access_token = refreshed.json()["access_token"]
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {access_token}"})
+    assert me.status_code == 200
+
+    rejected = client.post("/auth/refresh", json={"refresh_token": body["access_token"]})
+    assert rejected.status_code == 401
+    assert rejected.json()["detail"] == "Refresh token inválido"
+    assert client.post("/auth/refresh", json={}).status_code == 422
+
+
+def test_invoice_alias_and_container_photo_evidence(client, operator_headers):
+    shipment = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã"},
+    )
+    shipment_id = shipment.json()["id"]
+
+    invoice = client.post(
+        f"/shipments/{shipment_id}/documents",
+        headers=operator_headers,
+        files=[("files", ("nota.txt", b"Nota Fiscal", "text/plain"))],
+        data={"types": "INVOICE"},
+    )
+    assert invoice.status_code == 201, invoice.text
+    assert invoice.json()[0]["type"] == "NOTA_FISCAL"
+
+    photo = client.post(
+        f"/shipments/{shipment_id}/documents",
+        headers=operator_headers,
+        files=[("files", ("lacre.txt", b"Lacre: SL-1", "text/plain"))],
+        data={"types": "CONTAINER_PHOTO"},
+    )
+    assert photo.status_code == 201, photo.text
+    assert photo.json() == []
+
+    detail = client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()
+    assert len(detail["documents"]) == 1
+    assert detail["evidences"][0]["type"] == "FOTO_CONTAINER"
+
+    invalid = client.post(
+        f"/shipments/{shipment_id}/documents",
+        headers=operator_headers,
+        files=[("files", ("x.txt", b"texto", "text/plain"))],
+        data={"types": "FOO"},
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"] == "Tipo de documento inválido"
+
+
+def test_dashboard_metrics(client, operator_headers, session_factory):
+    from datetime import UTC, datetime, timedelta
+
+    from app.api.routes.dashboard import clear_dashboard_cache
+    from app.models import Shipment
+
+    now = datetime.now(UTC)
+    with session_factory() as db:
+        db.add(Shipment(origin="Santos", destination="Roterdã", status="REGISTERED"))
+        db.add(
+            Shipment(
+                origin="Santos",
+                destination="Roterdã",
+                status="REGISTERED",
+                dispatched_at=now - timedelta(hours=3),
+                returned_at=now,
+            )
+        )
+        db.add(Shipment(origin="Santos", destination="Roterdã", status="VALIDATED"))
+        db.add(Shipment(origin="Santos", destination="Roterdã", status="PENDING_REVIEW"))
+        db.commit()
+
+    clear_dashboard_cache()
+    body = client.get("/dashboard/metrics", headers=operator_headers).json()
+    assert body["average_transit_hours"] == 3.0
+    assert body["efficiency_percent"] == 50.0
+    assert len(body["volume_trend"]) == 30
+
+
+def test_validate_new_password_rules():
+    import pytest
+
+    from app.core.security import validate_new_password
+
+    with pytest.raises(ValueError):
+        validate_new_password("senha123")
+    validate_new_password("Password@123")

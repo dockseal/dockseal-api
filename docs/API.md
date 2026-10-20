@@ -16,7 +16,8 @@ Tudo o que o front-end precisa para consumir a API: como autenticar, o que cada 
    - [Embarques](#53-embarques)
    - [Alertas](#54-alertas)
    - [Histórico (auditoria)](#55-histórico-auditoria)
-   - [Saúde](#56-saúde)
+   - [Dashboard](#56-dashboard)
+   - [Saúde](#57-saúde)
 6. [Tipos TypeScript](#6-tipos-typescript)
 7. [Erros](#7-erros)
 8. [Fluxos de tela sugeridos](#8-fluxos-de-tela-sugeridos)
@@ -53,13 +54,13 @@ Sugestão de variável no front: `VITE_API_URL=http://localhost:8000`.
 
 Fluxo:
 
-1. O usuário faz login com e-mail e senha em `POST /auth/login` e recebe um `access_token` (JWT).
+1. O usuário faz login com e-mail e senha em `POST /auth/login` e recebe um `access_token` (JWT), um `refresh_token` e um resumo do usuário.
 2. O front guarda o token (ex.: `localStorage`) e o envia em **todas** as outras requisições:
    ```
    Authorization: Bearer <access_token>
    ```
-3. Logo após o login, chame `GET /auth/me` para pegar nome, perfil e **permissões**, e montar o menu.
-4. O token expira em **60 minutos**. Qualquer resposta **401** significa token ausente, inválido ou expirado: apague o token e mande para a tela de login.
+3. Logo após o login, chame `GET /auth/me` para pegar nome, perfil e **permissões**, e montar o menu. No login, `user.role` é uma string. Em `/auth/me`, `role` continua um objeto `{ "name": "..." }`.
+4. O access token expira em **60 minutos**. O refresh token expira em **7 dias**. Qualquer resposta **401** com o access token ausente, inválido ou expirado: chame `POST /auth/refresh` ou apague os tokens e mande para a tela de login.
 5. **Logout** é só apagar o token no front (não há rota de logout).
 
 > Não existe cadastro pela API. Os usuários são criados pela equipe do backend. O botão "solicitar acesso" da tela de login pode abrir um e-mail ou formulário externo.
@@ -89,12 +90,16 @@ Resumo:
 | Método | Rota | Para que serve | Permissão |
 |---|---|---|---|
 | POST | [`/auth/login`](#post-authlogin) | Login | pública |
+| POST | [`/auth/refresh`](#post-authrefresh) | Renovar o access token | pública |
 | GET | [`/auth/me`](#get-authme) | Usuário logado e permissões | autenticado |
 | POST | [`/analysis`](#post-analysis) | Analisar documentos avulsos com IA | `analysis:run` |
 | POST | [`/shipments`](#post-shipments) | Criar embarque | `shipment:write` |
 | GET | [`/shipments`](#get-shipments) | Listar embarques | `shipment:read` |
 | GET | [`/shipments/{id}`](#get-shipmentsid) | Detalhe do embarque + documentos | `shipment:read` |
-| PUT | [`/shipments/{id}/container`](#put-shipmentsidcontainer) | Associar/trocar contêiner | `shipment:write` |
+| PUT | [`/shipments/{id}/container`](#put-shipmentsidcontainer) | Trocar o contêiner principal | `shipment:write` |
+| POST | [`/shipments/{id}/containers`](#post-shipmentsidcontainers) | Adicionar contêiner | `shipment:write` |
+| GET | [`/shipments/{id}/events`](#get-shipmentsidevents) | Auditoria do embarque | `history:read` |
+| GET | [`/dashboard/metrics`](#get-dashboardmetrics) | Indicadores do dashboard | `shipment:read` |
 | POST | [`/shipments/{id}/documents`](#post-shipmentsiddocuments) | Enviar documentos do embarque | `document:upload` |
 | POST | [`/shipments/{id}/validate`](#post-shipmentsidvalidate) | Validar embarque com IA | `analysis:run` |
 | GET | [`/shipments/{id}/validations`](#get-shipmentsidvalidations) | Histórico de validações | `shipment:read` |
@@ -125,13 +130,37 @@ const res = await fetch(`${API}/auth/login`, {
 
 **200:**
 ```json
-{ "access_token": "eyJhbGciOiJIUzI1NiIs...", "token_type": "bearer" }
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "token_type": "bearer",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIs...",
+  "user": { "id": "2c1663b1-7b0a-4a25-8e38-3f37c24a723d", "name": "Operador", "role": "OPERADOR" }
+}
 ```
+
+`user.id` é UUID. `user.role` aqui é string (`OPERADOR`, `GESTOR` ou `ADMIN`). As permissões não vêm nesta resposta: use `GET /auth/me`, onde `role` é `{ "name": "OPERADOR" }`.
 
 | Erro | Quando | Mensagem para o usuário |
 |---|---|---|
 | 401 | E-mail ou senha errados, ou usuário inativo | `detail`: "E-mail ou senha inválidos" |
 | 422 | Campo faltando | "Preencha e-mail e senha" |
+
+---
+
+#### `POST /auth/refresh`
+
+Renova o access token. Corpo **JSON**, não formulário. O refresh token anterior continua válido até expirar.
+
+| Campo | Tipo | Obrigatório |
+|---|---|:-:|
+| `refresh_token` | string | ✅ |
+
+**200:** `{ "access_token", "token_type", "refresh_token" }`, sem objeto `user`.
+
+| Erro | Quando | `detail` |
+|---|---|---|
+| 401 | Token inválido, expirado, access token usado no lugar do refresh, ou usuário inativo | `Refresh token inválido` |
+| 422 | Campo `refresh_token` ausente | validação do FastAPI |
 
 ---
 
@@ -249,10 +278,13 @@ Cria um embarque. Corpo **JSON**.
 |---|---|:-:|---|
 | `origin` | string | ✅ | |
 | `destination` | string | ✅ | |
+| `shipment_id_custom` | string | | Identificador visível, único quando informado. Só espaços viram `null` |
+| `transport_company` | string | | Transportadora |
 | `dispatched_at` | string ISO | | Data de despacho |
+| `expected_arrival` | string ISO | | Chegada prevista. Não pode ser anterior ao início do dia UTC atual |
 | `expected_return` | string ISO | | Não pode ser anterior a `dispatched_at` |
 | `container` | objeto | | Pode ser associado depois |
-| `container.container_number` | string (4–20) | ✅ se enviar `container` | Espaços e hífens são removidos: `"MSCU 123456-7"` vira `"MSCU1234567"` |
+| `container.container_number` | string (4–20) | ✅ se enviar `container` | Depois de tirar espaços e hífens, precisa ser ISO 6346: 4 letras e 7 números. `"MSCU 123456-7"` vira `"MSCU1234567"` |
 | `container.iso_code` | string | | Ex.: `"22G1"` |
 | `container.type` | string | | Ex.: `"Dry 20'"` |
 | `container.owner` | string | | Ex.: `"MSC"` |
@@ -272,7 +304,7 @@ Cria um embarque. Corpo **JSON**.
 | Erro | Quando |
 |---|---|
 | 403 | Usuário sem `shipment:write` (ex.: GESTOR) |
-| 422 | Campo obrigatório faltando ou vazio, ou retorno anterior ao despacho |
+| 422 | Campo obrigatório faltando ou vazio, retorno anterior ao despacho, `expected_arrival` no passado (`Data de chegada prevista não pode ser anterior a hoje`), `shipment_id_custom` repetido (`Identificador de embarque já cadastrado`) ou número de contêiner fora da ISO 6346 |
 
 ---
 
@@ -293,7 +325,7 @@ A resposta não traz o total de itens. Para saber se há próxima página, verif
 
 #### `GET /shipments/{id}`
 
-Detalhe do embarque, **com a lista de documentos**.
+Detalhe do embarque, com documentos, evidências e a lista `containers`. `container` continua sendo o contêiner principal.
 
 **200** (exemplo real):
 ```json
@@ -303,6 +335,9 @@ Detalhe do embarque, **com a lista de documentos**.
   "destination": "Rotterdam",
   "dispatched_at": "2026-10-03T10:00:00Z",
   "expected_return": "2026-11-03T10:00:00Z",
+  "shipment_id_custom": null,
+  "transport_company": null,
+  "expected_arrival": null,
   "returned_at": null,
   "status": "PENDING_REVIEW",
   "container": {
@@ -311,13 +346,15 @@ Detalhe do embarque, **com a lista de documentos**.
     "iso_code": "22G1",
     "type": null,
     "owner": "MSC",
-    "status": "AVAILABLE"
+    "status": "IN_TRANSIT"
   },
+  "containers": [],
   "created_at": "2026-10-03T22:49:36.753384Z",
   "documents": [
     { "id": "ac965a6e-...", "type": "BILL_OF_LADING", "filename": "bill_of_lading.pdf", "status": "EXTRACTED", "created_at": "2026-10-03T22:49:36.996554Z" },
     { "id": "c1f098eb-...", "type": "NOTA_FISCAL", "filename": "nota_fiscal.docx", "status": "EXTRACTED", "created_at": "2026-10-03T22:49:36.996586Z" }
-  ]
+  ],
+  "evidences": []
 }
 ```
 
@@ -337,11 +374,23 @@ Status do embarque:
 
 #### `PUT /shipments/{id}/container`
 
-Associa um contêiner ao embarque ou troca o atual. Se o número já existir, reaproveita o contêiner existente. Corpo **JSON**, igual ao objeto `container` do `POST /shipments`:
+Troca o contêiner principal (`container`) e também o inclui em `containers`. Não remove os contêineres já associados. Se o número já existir, reaproveita o cadastro e não altera `iso_code`, `type` nem `owner`.
+
+O número, depois de tirar espaços e hífens, precisa casar com `^[A-Z]{4}\d{7}$`. Não há validação do dígito verificador.
+
+Se esse contêiner já estiver ligado a outro embarque com `returned_at` nulo, a API responde **422** com `detail` `Contêiner já está em trânsito em outro embarque`. O status do embarque não entra nessa regra.
 
 ```json
 { "container_number": "MSCU1234567", "iso_code": "22G1", "type": "Dry 20'", "owner": "MSC" }
 ```
+
+**200** → o `Shipment` atualizado. Ao associar, `container.status` passa a `IN_TRANSIT`.
+
+---
+
+#### `POST /shipments/{id}/containers`
+
+Adiciona um contêiner sem trocar o principal, quando o embarque já tem um. O corpo é o mesmo `ContainerIn`. A mesma regra de ISO 6346 e de embarque aberto vale aqui. Repetir o mesmo número no mesmo embarque responde **200** e não duplica a associação.
 
 **200** → o `Shipment` atualizado.
 
@@ -364,6 +413,10 @@ Valores de `types`:
 | `NOTA_FISCAL` | Nota Fiscal |
 | `ORDEM_CARREGAMENTO` | Ordem de Carregamento |
 | `OUTRO` | Outro |
+| `INVOICE` | Alias de `NOTA_FISCAL` |
+| `CONTAINER_PHOTO` | Não cria documento. Cria uma evidência `FOTO_CONTAINER`, visível em `GET /shipments/{id}` no campo `evidences` |
+
+A resposta **201** continua sendo um array só de documentos. Um upload apenas de `CONTAINER_PHOTO` devolve `[]`. Tipo desconhecido responde **422** com `detail` `Tipo de documento inválido`.
 
 ```ts
 const form = new FormData();
@@ -438,7 +491,7 @@ Lista alertas, ordenados por **criticidade** (CRITICA → ALTA → MEDIA → BAI
 
 | Query | Valores | Descrição |
 |---|---|---|
-| `status` | `OPEN`, `RESOLVED`, `CLOSED` | Filtra por status |
+| `status` | `OPEN`, `RESOLVED`, `CLOSED`, `DISMISSED` | Filtra por status |
 | `severity` | `BAIXA`, `MEDIA`, `ALTA`, `CRITICA` | Filtra por severidade |
 | `shipment_id` | UUID | Alertas de um embarque |
 
@@ -452,9 +505,11 @@ Exemplo: `GET /alerts?status=OPEN&severity=CRITICA`
     "severity": "CRITICA",
     "description": "lacre: O lacre no Manifesto de Carga é SL-884599, divergente do Bill of Lading e Nota Fiscal que indicam SL-884512. Sugestão: Corrigir o lacre no Manifesto de Carga para SL-884512, conforme Bill of Lading e Nota Fiscal.",
     "status": "OPEN",
+    "resolution_note": null,
     "shipment_id": "b115cff4-9ec1-4fa2-bba1-f8584cab877f",
     "validation_id": "5b653c82-7b92-4700-b1e4-1ea237c52aa9",
-    "created_at": "2026-10-03T23:02:24.560184Z"
+    "created_at": "2026-10-03T23:02:24.560184Z",
+    "updated_at": "2026-10-03T23:02:24.560184Z"
   }
 ]
 ```
@@ -473,6 +528,7 @@ Exemplo: `GET /alerts?status=OPEN&severity=CRITICA`
 | `OPEN` | Aberto |
 | `RESOLVED` | Resolvido |
 | `CLOSED` | Fechado |
+| `DISMISSED` | Falso positivo |
 
 ---
 
@@ -481,12 +537,14 @@ Exemplo: `GET /alerts?status=OPEN&severity=CRITICA`
 Muda o status do alerta. Só para quem tem `alert:manage` (GESTOR/ADMIN). Corpo **JSON**:
 
 ```json
-{ "status": "RESOLVED" }
+{ "status": "RESOLVED", "resolution_note": "Ajuste validado com a transportadora." }
 ```
 
-Botões sugeridos: "Marcar como resolvido" → `RESOLVED`, "Falso positivo" → `CLOSED`, "Reabrir" → `OPEN`.
+`resolution_note` é opcional (até 2000 caracteres). Se a chave não vier, a nota atual permanece. Se vier `null`, a nota é apagada.
 
-**200** → o `Alert` atualizado.
+Botões sugeridos: "Marcar como resolvido" → `RESOLVED`, "Falso positivo" → `DISMISSED`, "Fechar" → `CLOSED`, "Reabrir" → `OPEN`.
+
+**200** → o `Alert` atualizado, incluindo `resolution_note` e `updated_at`. O evento de auditoria correspondente é `ALERT_RESOLVED`, `ALERT_DISMISSED`, `ALERT_CLOSED` ou `ALERT_OPEN`.
 
 | Erro | Quando |
 |---|---|
@@ -530,7 +588,7 @@ Trilha de auditoria, a mais recente primeiro. Só para quem tem `history:read`.
 | `DOCUMENTS_UPLOADED` | Documentos enviados |
 | `VALIDATION` | Validação do embarque |
 | `ANALYSIS` | Análise de documentos avulsos |
-| `ALERT_OPEN` / `ALERT_RESOLVED` / `ALERT_CLOSED` | Alerta reaberto / resolvido / fechado |
+| `ALERT_OPEN` / `ALERT_RESOLVED` / `ALERT_CLOSED` / `ALERT_DISMISSED` | Alerta reaberto / resolvido / fechado / marcado como falso positivo |
 
 `status` é `SUCCESS`, `FAILURE` ou, nas análises, o resultado (`CONFORME`, `DIVERGENTE`, `INCONCLUSIVO`).
 
@@ -538,7 +596,37 @@ Trilha de auditoria, a mais recente primeiro. Só para quem tem `history:read`.
 
 ---
 
-### 5.6 Saúde
+#### `GET /shipments/{id}/events`
+
+Os mesmos itens de `GET /events`, restritos ao embarque e ordenados do mais recente para o mais antigo. Permissão `history:read` (operador recebe **403**). `limit` padrão 100.
+
+**404** com `detail` `Embarque não encontrado` se o id não existe. `GET /events` continua disponível.
+
+---
+
+### 5.6 Dashboard
+
+#### `GET /dashboard/metrics`
+
+Indicadores calculados na API. Permissão `shipment:read`. A resposta fica em cache neste processo por **5 minutos** e não é invalidada a cada gravação.
+
+```json
+{
+  "shipments_in_yard": 3,
+  "average_transit_hours": 3.0,
+  "efficiency_percent": 50.0,
+  "volume_trend": [{ "date": "2026-09-15", "count": 0 }]
+}
+```
+
+- `shipments_in_yard`: embarques com `returned_at` nulo.
+- `average_transit_hours`: média, em horas, de `returned_at - dispatched_at` quando as duas datas existem. Sem amostra, `null`. Com amostra, arredondado a 2 casas.
+- `efficiency_percent`: `VALIDATED / (VALIDATED + PENDING_REVIEW) * 100`. `REGISTERED` fica de fora. Denominador zero devolve `null`.
+- `volume_trend`: exatamente 30 dias UTC, do mais antigo até hoje, com `count` zero nos dias sem embarque. `date` é `YYYY-MM-DD`.
+
+---
+
+### 5.7 Saúde
 
 #### `GET /health`
 
@@ -560,10 +648,12 @@ export type ShipmentStatus = "REGISTERED" | "VALIDATED" | "PENDING_REVIEW";
 export type DocumentType = "BILL_OF_LADING" | "MANIFESTO_CARGA" | "NOTA_FISCAL" | "ORDEM_CARREGAMENTO" | "OUTRO";
 export type AnalysisStatus = "CONFORME" | "DIVERGENTE" | "INCONCLUSIVO";
 export type Severity = "BAIXA" | "MEDIA" | "ALTA" | "CRITICA";
-export type AlertStatus = "OPEN" | "RESOLVED" | "CLOSED";
+export type AlertStatus = "OPEN" | "RESOLVED" | "CLOSED" | "DISMISSED";
 
 // ---------- Autenticação ----------
-export interface Token { access_token: string; token_type: "bearer" }
+export interface Token { access_token: string; token_type: "bearer"; refresh_token: string }
+export interface LoginUser { id: string; name: string; role: RoleName }
+export interface LoginResponse extends Token { user: LoginUser }
 
 export interface User {
   id: string;
@@ -614,7 +704,10 @@ export interface Container {
 export interface ShipmentInput {
   origin: string;
   destination: string;
+  shipment_id_custom?: string;
+  transport_company?: string;
   dispatched_at?: string;   // ISO UTC
+  expected_arrival?: string; // ISO UTC
   expected_return?: string; // ISO UTC
   container?: ContainerInput;
 }
@@ -623,11 +716,15 @@ export interface Shipment {
   id: string;
   origin: string;
   destination: string;
+  shipment_id_custom: string | null;
+  transport_company: string | null;
   dispatched_at: string | null;
+  expected_arrival: string | null;
   expected_return: string | null;
   returned_at: string | null;
   status: ShipmentStatus;
   container: Container | null;
+  containers: Container[];
   created_at: string;
 }
 
@@ -639,7 +736,24 @@ export interface ShipmentDocument {
   created_at: string;
 }
 
-export interface ShipmentDetail extends Shipment { documents: ShipmentDocument[] }
+export type EvidenceType = "FOTO_CONTAINER" | "FOTO_DOCUMENTO" | "ARQUIVO_DIGITAL" | "COMPROVANTE" | "OUTRO";
+export interface Evidence {
+  id: string;
+  type: EvidenceType;
+  mime_type: string;
+  url: string;
+  location: string | null;
+  created_at: string;
+}
+export interface ShipmentDetail extends Shipment { documents: ShipmentDocument[]; evidences: Evidence[] }
+
+export interface VolumeTrendPoint { date: string; count: number }
+export interface DashboardMetrics {
+  shipments_in_yard: number;
+  average_transit_hours: number | null;
+  efficiency_percent: number | null;
+  volume_trend: VolumeTrendPoint[];
+}
 
 export interface Validation {
   id: string;
@@ -657,9 +771,11 @@ export interface Alert {
   severity: Severity;
   description: string;
   status: AlertStatus;
+  resolution_note: string | null;
   shipment_id: string | null;
   validation_id: string | null;
   created_at: string;
+  updated_at: string;
 }
 
 export interface ProcessEvent {
@@ -698,7 +814,7 @@ export const SEVERITY_LABEL: Record<Severity, string> = {
   BAIXA: "Baixa", MEDIA: "Média", ALTA: "Alta", CRITICA: "Crítica",
 };
 export const ALERT_STATUS_LABEL: Record<AlertStatus, string> = {
-  OPEN: "Aberto", RESOLVED: "Resolvido", CLOSED: "Fechado",
+  OPEN: "Aberto", RESOLVED: "Resolvido", CLOSED: "Fechado", DISMISSED: "Falso positivo",
 };
 ```
 
@@ -739,7 +855,7 @@ Telas do protótipo do TCC (IHM) e as chamadas de cada uma:
 | Tela | Chamadas |
 |---|---|
 | **Login** | `POST /auth/login` → guardar token → `GET /auth/me` |
-| **Visão geral (dashboard)** | `GET /shipments` (contar por `status`) + `GET /alerts?status=OPEN` (contar por `severity`). Não há rota de indicadores pronta; os números são calculados no front |
+| **Visão geral (dashboard)** | `GET /dashboard/metrics`. A lista e os alertas continuam em `GET /shipments` e `GET /alerts?status=OPEN` |
 | **Análise rápida** | `POST /analysis` com os arquivos → renderizar o `AnalysisResult` |
 | **Histórico de embarques** | `GET /shipments?limit=20&offset=...` |
 | **Novo embarque** | `POST /shipments` → `POST /shipments/{id}/documents` → `POST /shipments/{id}/validate` → `GET /shipments/{id}` |
@@ -747,7 +863,7 @@ Telas do protótipo do TCC (IHM) e as chamadas de cada uma:
 | **Central de alertas** | `GET /alerts?status=&severity=` → no detalhe, buscar a validação pelo `validation_id` → `PATCH /alerts/{id}` nos botões |
 | **Auditoria** | `GET /events?shipment_id=` (somente com `history:read`) |
 
-O que ainda não existe na API (não tente consumir): envio de evidências (fotos), download de documentos, indicadores prontos para o dashboard, exportação de relatórios, recuperação de senha e cadastro de usuários.
+O que ainda não existe na API (não tente consumir): download de documentos, exportação de relatórios, recuperação de senha e cadastro de usuários. Fotos de contêiner entram no upload com o tipo `CONTAINER_PHOTO`. Indicadores prontos estão em `GET /dashboard/metrics`.
 
 ## 9. Client pronto (fetch)
 
@@ -807,6 +923,9 @@ export const api = {
     localStorage.setItem(TOKEN_KEY, access_token);
     return api.me();
   },
+  refresh(refreshToken: string) {
+    return request<Token>("/auth/refresh", { method: "POST", body: json({ refresh_token: refreshToken }) });
+  },
   me: () => request<User>("/auth/me"),
 
   // Análise avulsa (10 a 40 s)
@@ -836,8 +955,8 @@ export const api = {
   // Alertas
   listAlerts: (f: { status?: AlertStatus; severity?: Severity; shipment_id?: string } = {}) =>
     request<Alert[]>(`/alerts${query(f)}`),
-  setAlertStatus: (id: string, status: AlertStatus) =>
-    request<Alert>(`/alerts/${id}`, { method: "PATCH", body: json({ status }) }),
+  setAlertStatus: (id: string, status: AlertStatus, resolutionNote?: string) =>
+    request<Alert>(`/alerts/${id}`, { method: "PATCH", body: json({ status, resolution_note: resolutionNote }) }),
 
   // Histórico
   listEvents: (f: { shipment_id?: string; limit?: number } = {}) => request<ProcessEvent[]>(`/events${query(f)}`),

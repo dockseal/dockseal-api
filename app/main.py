@@ -7,7 +7,8 @@ from app.api.routes import alerts, analysis, auth, dashboard, shipments
 from app.core.config import get_settings
 from app.core.database import Base, SessionLocal, engine
 from app.core.schema_migration import ensure_schema
-from app.services.auth_service import seed_roles
+from app.services.auth_service import seed_roles
+from app.core.sentry import init_sentry
 
 DESCRIPTION = """
 API da **Dockseal — Plataforma Inteligente de Conformidade Portuária**.
@@ -36,6 +37,8 @@ async def lifespan(_: FastAPI):
         seed_roles(db)
     yield
 
+
+init_sentry()
 
 app = FastAPI(
     title=get_settings().app_name,

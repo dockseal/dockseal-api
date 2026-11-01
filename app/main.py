@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import alerts, analysis, auth, dashboard, shipments
+from app.api.routes import alerts, analysis, auth, dashboard, shipments, users
 from app.core.config import get_settings
 from app.core.database import Base, SessionLocal, engine
 from app.core.schema_migration import ensure_schema
@@ -24,6 +24,7 @@ TAGS = [
     {"name": "Embarques", "description": "Cadastro de embarques, contêineres, documentos e validação com IA."},
     {"name": "Alertas e histórico", "description": "Alertas gerados pelas validações e trilha de auditoria."},
     {"name": "Dashboard", "description": "Indicadores calculados para a visão do gestor."},
+    {"name": "Usuários", "description": "Cadastro de usuários. Somente administrador."},
     {"name": "Infra", "description": "Verificação de saúde da API."},
 ]
 
@@ -57,6 +58,7 @@ app.include_router(analysis.router)
 app.include_router(shipments.router)
 app.include_router(alerts.router)
 app.include_router(dashboard.router)
+app.include_router(users.router)
 
 
 @app.get("/health", tags=["Infra"], summary="Verificar se a API está no ar")

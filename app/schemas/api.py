@@ -194,3 +194,46 @@ class DashboardMetrics(BaseModel):
     average_transit_hours: float | None
     efficiency_percent: float | None
     volume_trend: list[VolumeTrendPoint]
+
+
+UserRoleName = Literal["OPERADOR", "GESTOR", "ADMIN"]
+UserStatusName = Literal["ACTIVE", "INACTIVE"]
+
+
+class UserCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    email: str = Field(max_length=255)
+    password: str
+    role: UserRoleName
+
+    @field_validator("name", "email")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("email")
+    @classmethod
+    def lower_email(cls, value: str) -> str:
+        return value.lower()
+
+
+class UserUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    email: str | None = Field(default=None, max_length=255)
+    password: str | None = None
+    role: UserRoleName | None = None
+    status: UserStatusName | None = None
+
+    @field_validator("name", "email")
+    @classmethod
+    def strip_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+    @field_validator("email")
+    @classmethod
+    def lower_optional_email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.lower()

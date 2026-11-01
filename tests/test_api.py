@@ -414,6 +414,108 @@ def test_dashboard_metrics(client, operator_headers, session_factory):
     assert len(body["volume_trend"]) == 30
 
 
+PASSWORD_DETAIL = (
+    "Senha deve ter no mínimo 8 caracteres, com maiúscula, minúscula, número e caractere especial."
+)
+
+
+def test_users_forbidden_for_operator_and_manager(client, operator_headers, manager_headers):
+    payload = {"name": "Ana", "email": "ana@dockseal.com", "password": "Senha@123", "role": "OPERADOR"}
+    for headers in (operator_headers, manager_headers):
+        listed = client.get("/users", headers=headers)
+        assert listed.status_code == 403
+        assert listed.json()["detail"] == "Usuário sem permissão para esta ação"
+        created = client.post("/users", headers=headers, json=payload)
+        assert created.status_code == 403
+
+
+def test_admin_user_crud_and_audit(client, admin_headers):
+    created = client.post(
+        "/users",
+        headers=admin_headers,
+        json={"name": "Ana", "email": " Ana@Dockseal.com ", "password": "Senha@123", "role": "OPERADOR"},
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["email"] == "ana@dockseal.com"
+    assert body["status"] == "ACTIVE"
+    assert body["role"]["name"] == "OPERADOR"
+    assert "password_hash" not in body
+    user_id = body["id"]
+
+    listed = client.get("/users", headers=admin_headers)
+    assert listed.status_code == 200
+    assert any(user["id"] == user_id for user in listed.json())
+
+    events = client.get("/events", headers=admin_headers).json()
+    assert any(
+        event["step"] == "USER_CREATED"
+        and event["status"] == "SUCCESS"
+        and event["shipment_id"] is None
+        and event["observation"] == "Usuário ana@dockseal.com criado com o perfil OPERADOR."
+        for event in events
+    )
+
+    weak = client.post(
+        "/users",
+        headers=admin_headers,
+        json={"name": "Fraca", "email": "fraca@dockseal.com", "password": "senha123", "role": "OPERADOR"},
+    )
+    assert weak.status_code == 422
+    assert weak.json()["detail"] == PASSWORD_DETAIL
+
+    duplicate = client.post(
+        "/users",
+        headers=admin_headers,
+        json={"name": "Ana 2", "email": "ana@dockseal.com", "password": "Senha@123", "role": "GESTOR"},
+    )
+    assert duplicate.status_code == 422
+    assert duplicate.json()["detail"] == "E-mail já cadastrado"
+
+    patched = client.patch(f"/users/{user_id}", headers=admin_headers, json={"name": "Ana Souza"})
+    assert patched.status_code == 200
+    assert patched.json()["name"] == "Ana Souza"
+    events = client.get("/events", headers=admin_headers).json()
+    assert any(
+        event["step"] == "USER_UPDATED" and event["observation"] == "Usuário ana@dockseal.com atualizado."
+        for event in events
+    )
+
+    me = client.get("/auth/me", headers=admin_headers).json()
+    own = client.delete(f"/users/{me['id']}", headers=admin_headers)
+    assert own.status_code == 422
+    assert own.json()["detail"] == "Você não pode excluir o próprio usuário."
+
+    demoted = client.patch(f"/users/{me['id']}", headers=admin_headers, json={"role": "GESTOR", "status": "INACTIVE"})
+    assert demoted.status_code == 422
+    assert demoted.json()["detail"] == "Não é possível alterar o perfil do último administrador."
+
+    inactive = client.patch(f"/users/{me['id']}", headers=admin_headers, json={"status": "INACTIVE"})
+    assert inactive.status_code == 422
+    assert inactive.json()["detail"] == "Não é possível desativar o último administrador."
+
+    second = client.post(
+        "/users",
+        headers=admin_headers,
+        json={"name": "Admin 2", "email": "admin2@dockseal.com", "password": "Senha@123", "role": "ADMIN"},
+    )
+    assert second.status_code == 201
+    deleted = client.delete(f"/users/{second.json()['id']}", headers=admin_headers)
+    assert deleted.status_code == 204
+    assert deleted.content == b""
+    events = client.get("/events", headers=admin_headers).json()
+    assert any(
+        event["step"] == "USER_DELETED" and event["observation"] == "Usuário admin2@dockseal.com excluído."
+        for event in events
+    )
+
+    missing = uuid.uuid4()
+    not_found = client.patch(f"/users/{missing}", headers=admin_headers, json={"name": "Ninguém"})
+    assert not_found.status_code == 404
+    assert not_found.json()["detail"] == "Usuário não encontrado"
+    assert client.delete(f"/users/{missing}", headers=admin_headers).status_code == 404
+
+
 def test_validate_new_password_rules():
     import pytest
 

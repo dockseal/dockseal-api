@@ -63,6 +63,7 @@ def session_factory(monkeypatch):
         auth = AuthenticationService(db)
         auth.create_user("Operador", "operador@dockseal.com", "senha123", "OPERADOR")
         auth.create_user("Gestor", "gestor@dockseal.com", "senha123", "GESTOR")
+        auth.create_user("Admin", "admin@dockseal.com", "senha123", "ADMIN")
     return factory
 
 
@@ -106,3 +107,8 @@ def operator_headers(client):
 @pytest.fixture
 def manager_headers(client):
     return login(client, "gestor@dockseal.com")
+
+
+@pytest.fixture
+def admin_headers(client):
+    return login(client, "admin@dockseal.com")

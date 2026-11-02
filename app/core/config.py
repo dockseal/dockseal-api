@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 20
     max_files_per_analysis: int = 10
 
+    # Sentry. Sem DSN, o monitoramento fica desligado.
+    sentry_dsn: str | None = None
+    sentry_environment: str = "local"
+    sentry_release: str | None = None
+    sentry_traces_sample_rate: float = 1.0
+
 
 @lru_cache
 def get_settings() -> Settings:

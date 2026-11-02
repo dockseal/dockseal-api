@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     sentry_environment: str = "local"
     sentry_release: str | None = None
     sentry_traces_sample_rate: float = 1.0
+    # Cloudflare R2. Sem estes campos, os arquivos ficam no disco local.
+    r2_account_id: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket: str | None = None
 
 
 @lru_cache

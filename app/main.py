@@ -4,10 +4,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import alerts, analysis, auth, dashboard, shipments, users
+from app.api.routes import alerts, analysis, auth, dashboard, shipments
 from app.core.config import get_settings
 from app.core.database import Base, SessionLocal, engine
 from app.core.schema_migration import ensure_schema
-from app.services.auth_service import seed_roles
+from app.services.auth_service import seed_roles
+
 from app.core.sentry import init_sentry
 
 DESCRIPTION = """

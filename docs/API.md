@@ -78,6 +78,7 @@ Fluxo:
 | `alert:read` | Ver alertas | ✅ | ✅ | ✅ |
 | `alert:manage` | Resolver/fechar alertas | | ✅ | ✅ |
 | `history:read` | Ver histórico/auditoria | | ✅ | ✅ |
+| `user:manage` | Criar, listar, atualizar e excluir usuários | | | ✅ |
 
 Se o usuário chamar uma rota sem permissão, a API responde **403**.
 
@@ -106,6 +107,10 @@ Resumo:
 | GET | [`/alerts`](#get-alerts) | Listar alertas | `alert:read` |
 | PATCH | [`/alerts/{id}`](#patch-alertsid) | Resolver/fechar/reabrir alerta | `alert:manage` |
 | GET | [`/events`](#get-events) | Histórico/auditoria | `history:read` |
+| GET | [`/users`](#get-users) | Listar usuários | `user:manage` |
+| POST | [`/users`](#post-users) | Criar usuário | `user:manage` |
+| PATCH | [`/users/{id}`](#patch-usersid) | Atualizar usuário | `user:manage` |
+| DELETE | [`/users/{id}`](#delete-usersid) | Excluir usuário | `user:manage` |
 | GET | [`/health`](#get-health) | API está no ar? | pública |
 
 ### 5.1 Autenticação
@@ -589,6 +594,9 @@ Trilha de auditoria, a mais recente primeiro. Só para quem tem `history:read`.
 | `VALIDATION` | Validação do embarque |
 | `ANALYSIS` | Análise de documentos avulsos |
 | `ALERT_OPEN` / `ALERT_RESOLVED` / `ALERT_CLOSED` / `ALERT_DISMISSED` | Alerta reaberto / resolvido / fechado / marcado como falso positivo |
+| `USER_CREATED` | Usuário criado |
+| `USER_UPDATED` | Usuário atualizado |
+| `USER_DELETED` | Usuário excluído |
 
 `status` é `SUCCESS`, `FAILURE` ou, nas análises, o resultado (`CONFORME`, `DIVERGENTE`, `INCONCLUSIVO`).
 
@@ -626,7 +634,67 @@ Indicadores calculados na API. Permissão `shipment:read`. A resposta fica em ca
 
 ---
 
-### 5.7 Saúde
+### 5.7 Usuários
+
+Somente quem tem `user:manage` (ADMIN). Operador e gestor recebem **403** com `detail` `Usuário sem permissão para esta ação`. A resposta é `UserOut`, sem hash de senha. A lista é um array cru, ordenado por nome e depois por e-mail.
+
+E-mail é gravado sem espaços nas pontas e em minúsculas. Senha nova segue a mesma regra do cadastro: `Senha deve ter no mínimo 8 caracteres, com maiúscula, minúscula, número e caractere especial.`
+
+#### `GET /users`
+
+| Query | Padrão | Limites |
+|---|---|---|
+| `limit` | 50 | 1 a 100 |
+| `offset` | 0 | mínimo 0 |
+
+**200:** `UserOut[]`.
+
+#### `POST /users`
+
+Corpo JSON: `name` (1–150), `email` (até 255), `password` e `role` (`OPERADOR`, `GESTOR` ou `ADMIN`). O status gravado é `ACTIVE`.
+
+**201:** `UserOut`.
+
+| Status | `detail` |
+|---|---|
+| 422 | `E-mail já cadastrado` |
+| 422 | `Senha deve ter no mínimo 8 caracteres, com maiúscula, minúscula, número e caractere especial.` |
+
+Auditoria na mesma transação: `USER_CREATED`, `user_id` de quem criou, `shipment_id` nulo, `status` `SUCCESS`, `observation` `Usuário {email} criado com o perfil {role}.`
+
+#### `PATCH /users/{id}`
+
+Todos os campos são opcionais: `name`, `email`, `password`, `role` e `status` (`ACTIVE` ou `INACTIVE`). Senha vazia ou ausente não muda a senha.
+
+**200:** `UserOut`.
+
+| Status | `detail` |
+|---|---|
+| 404 | `Usuário não encontrado` |
+| 422 | `E-mail já cadastrado` |
+| 422 | a mesma mensagem de senha do `POST` |
+| 422 | `Não é possível alterar o perfil do último administrador.` |
+| 422 | `Não é possível desativar o último administrador.` |
+
+Se perfil e status mudam juntos no último administrador ativo, vale a mensagem do perfil. Administrador já inativo não entra nessa trava. O último administrador ativo é o único usuário com papel `ADMIN` e status `ACTIVE`.
+
+Auditoria: `USER_UPDATED`, `observation` `Usuário {email} atualizado.`
+
+#### `DELETE /users/{id}`
+
+**204** sem corpo.
+
+| Status | `detail` |
+|---|---|
+| 404 | `Usuário não encontrado` |
+| 422 | `Você não pode excluir o próprio usuário.` |
+| 422 | `Não é possível excluir o último administrador.` |
+
+O evento `USER_DELETED` é gravado antes, com o id de quem excluiu e `observation` `Usuário {email} excluído.` Em seguida os eventos antigos do usuário excluído ficam com `user_id` nulo. Só então o usuário é apagado, no mesmo commit.
+
+---
+
+### 5.8 Saúde
 
 #### `GET /health`
 
@@ -643,7 +711,7 @@ Copie para `src/api/types.ts`:
 export type RoleName = "OPERADOR" | "GESTOR" | "ADMIN";
 export type Permission =
   | "shipment:read" | "shipment:write" | "document:upload" | "analysis:run"
-  | "alert:read" | "alert:manage" | "history:read";
+  | "alert:read" | "alert:manage" | "history:read" | "user:manage";
 export type ShipmentStatus = "REGISTERED" | "VALIDATED" | "PENDING_REVIEW";
 export type DocumentType = "BILL_OF_LADING" | "MANIFESTO_CARGA" | "NOTA_FISCAL" | "ORDEM_CARREGAMENTO" | "OUTRO";
 export type AnalysisStatus = "CONFORME" | "DIVERGENTE" | "INCONCLUSIVO";

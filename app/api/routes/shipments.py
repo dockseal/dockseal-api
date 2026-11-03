@@ -38,6 +38,7 @@ from app.services.audit_service import list_events, register_event
 from app.services.auth_service import Permissions
 from app.services.extraction_service import ExtractionService
 from app.services.validation_service import ValidationService
+from app.services.storage_service import save_file
 
 ISO_6346 = re.compile(r"^[A-Z]{4}\d{7}$")
 ISO_6346_DETAIL = "Número de contêiner inválido. Use o padrão ISO 6346: 4 letras e 7 números."
@@ -233,19 +234,17 @@ async def upload_documents(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=INVALID_DOCUMENT_TYPE_DETAIL)
 
     uploads = await extract_uploads(files, ExtractionService())
-    folder = get_settings().upload_dir / str(shipment.id)
-    folder.mkdir(parents=True, exist_ok=True)
 
     documents = []
     for i, upload in enumerate(uploads):
         raw_type = normalized[i] if normalized is not None else "OUTRO"
-        path = folder / f"{new_id()}{Path(upload.filename).suffix.lower()}"
-        path.write_bytes(upload.content)
+        content_type = files[i].content_type or "application/octet-stream"
+        key = save_file(f"{shipment.id}/{new_id()}{Path(upload.filename).suffix.lower()}", upload.content, content_type)
         if raw_type == "CONTAINER_PHOTO":
             evidence = Evidence(
                 type=EvidenceType.FOTO_CONTAINER,
-                mime_type=files[i].content_type or "application/octet-stream",
-                url=str(path),
+                mime_type=content_type,
+                url=key,
                 shipment=shipment,
             )
             evidence.extraction = Extraction(text=upload.text, processed_at=datetime.now(UTC))
@@ -254,7 +253,7 @@ async def upload_documents(
         document = Document(
             type=DOCUMENT_TYPES[raw_type],
             filename=upload.filename,
-            url=str(path),
+            url=key,
             status="EXTRACTED",
             shipment=shipment,
         )

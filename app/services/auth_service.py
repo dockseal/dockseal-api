@@ -13,6 +13,7 @@ class Permissions:
     ALERT_READ = "alert:read"
     ALERT_MANAGE = "alert:manage"
     HISTORY_READ = "history:read"
+    USER_MANAGE = "user:manage"
 
 
 PERMISSION_DESCRIPTIONS = {
@@ -23,6 +24,7 @@ PERMISSION_DESCRIPTIONS = {
     Permissions.ALERT_READ: "Consultar alertas",
     Permissions.ALERT_MANAGE: "Resolver ou fechar alertas",
     Permissions.HISTORY_READ: "Consultar histórico operacional",
+    Permissions.USER_MANAGE: "Gerenciar usuários",
 }
 
 ROLE_PERMISSIONS = {

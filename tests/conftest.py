@@ -76,7 +76,10 @@ def analyzer():
 def client(session_factory, analyzer, tmp_path, monkeypatch):
     from app.core.config import get_settings
 
-    monkeypatch.setattr(get_settings(), "upload_dir", tmp_path)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "upload_dir", tmp_path)
+    # Garante disco local nos testes, mesmo com R2_* preenchidas no .env.
+    monkeypatch.setattr(settings, "r2_bucket", None)
 
     def override_db():
         with session_factory() as db:

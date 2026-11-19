@@ -620,15 +620,11 @@ Indicadores calculados na API. Permissão `shipment:read`. A resposta fica em ca
 
 ```json
 {
-  "shipments_in_yard": 3,
-  "average_transit_hours": 3.0,
   "efficiency_percent": 50.0,
   "volume_trend": [{ "date": "2026-09-15", "count": 0 }]
 }
 ```
 
-- `shipments_in_yard`: embarques com `returned_at` nulo.
-- `average_transit_hours`: média, em horas, de `returned_at - dispatched_at` quando as duas datas existem. Sem amostra, `null`. Com amostra, arredondado a 2 casas.
 - `efficiency_percent`: `VALIDATED / (VALIDATED + PENDING_REVIEW) * 100`. `REGISTERED` fica de fora. Denominador zero devolve `null`.
 - `volume_trend`: exatamente 30 dias UTC, do mais antigo até hoje, com `count` zero nos dias sem embarque. `date` é `YYYY-MM-DD`.
 
@@ -817,8 +813,6 @@ export interface ShipmentDetail extends Shipment { documents: ShipmentDocument[]
 
 export interface VolumeTrendPoint { date: string; count: number }
 export interface DashboardMetrics {
-  shipments_in_yard: number;
-  average_transit_hours: number | null;
   efficiency_percent: number | null;
   volume_trend: VolumeTrendPoint[];
 }

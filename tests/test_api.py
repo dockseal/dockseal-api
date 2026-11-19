@@ -386,30 +386,19 @@ def test_invoice_alias_and_container_photo_evidence(client, operator_headers):
 
 
 def test_dashboard_metrics(client, operator_headers, session_factory):
-    from datetime import UTC, datetime, timedelta
-
     from app.api.routes.dashboard import clear_dashboard_cache
     from app.models import Shipment
 
-    now = datetime.now(UTC)
     with session_factory() as db:
         db.add(Shipment(origin="Santos", destination="Roterdã", status="REGISTERED"))
-        db.add(
-            Shipment(
-                origin="Santos",
-                destination="Roterdã",
-                status="REGISTERED",
-                dispatched_at=now - timedelta(hours=3),
-                returned_at=now,
-            )
-        )
         db.add(Shipment(origin="Santos", destination="Roterdã", status="VALIDATED"))
         db.add(Shipment(origin="Santos", destination="Roterdã", status="PENDING_REVIEW"))
         db.commit()
 
     clear_dashboard_cache()
     body = client.get("/dashboard/metrics", headers=operator_headers).json()
-    assert body["average_transit_hours"] == 3.0
+    assert "shipments_in_yard" not in body
+    assert "average_transit_hours" not in body
     assert body["efficiency_percent"] == 50.0
     assert len(body["volume_trend"]) == 30
 

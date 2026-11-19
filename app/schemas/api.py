@@ -190,8 +190,6 @@ class VolumeTrendPoint(BaseModel):
 
 
 class DashboardMetrics(BaseModel):
-    shipments_in_yard: int
-    average_transit_hours: float | None
     efficiency_percent: float | None
     volume_trend: list[VolumeTrendPoint]
 

@@ -29,6 +29,8 @@ def ensure_schema(engine) -> None:
         columns = {column["name"] for column in inspector.get_columns("alert")}
         if "resolution_note" not in columns:
             statements.append("ALTER TABLE alert ADD COLUMN resolution_note TEXT")
+        if "field" not in columns:
+            statements.append("ALTER TABLE alert ADD COLUMN field VARCHAR(150)")
 
     if statements:
         with engine.begin() as connection:

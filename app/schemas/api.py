@@ -125,8 +125,8 @@ class ShipmentOut(ORMModel):
     expected_return: UtcDatetime | None
     returned_at: UtcDatetime | None
     status: ShipmentStatus = Field(
-        description="REGISTERED (cadastrado), VALIDATED (validado sem divergências), "
-        "PENDING_REVIEW (validado com divergências ou inconclusivo)"
+        description="REGISTERED (cadastrado), VALIDATED (alertas tratados ou análise conforme), "
+        "PENDING_REVIEW (alerta aberto ou análise sem alerta acionável)"
     )
     container: ContainerOut | None
     containers: list[ContainerOut]
@@ -190,8 +190,6 @@ class VolumeTrendPoint(BaseModel):
 
 
 class DashboardMetrics(BaseModel):
-    shipments_in_yard: int
-    average_transit_hours: float | None
     efficiency_percent: float | None
     volume_trend: list[VolumeTrendPoint]
 

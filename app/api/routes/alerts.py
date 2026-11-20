@@ -5,11 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import case, select
 
 from app.api.deps import DbSession, require_permission
-from app.models import Alert, User
+from app.models import Alert, Shipment, User
 from app.schemas.api import AlertOut, AlertSeverity, AlertStatus, AlertStatusIn, ProcessEventOut
 from app.services.audit_service import list_events as query_events
 from app.services.audit_service import register_event
 from app.services.auth_service import Permissions
+from app.services.validation_service import sync_shipment_review_status
 
 router = APIRouter(tags=["Alertas e histórico"])
 
@@ -59,6 +60,8 @@ def update_alert(
     if "resolution_note" in data.model_fields_set:
         alert.resolution_note = data.resolution_note
     register_event(db, f"ALERT_{data.status}", user_id=user.id, shipment_id=alert.shipment_id, observation=str(alert.id))
+    if alert.shipment_id is not None:
+        sync_shipment_review_status(db, db.get(Shipment, alert.shipment_id))
     db.commit()
     return alert
 

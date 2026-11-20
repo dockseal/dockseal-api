@@ -67,11 +67,17 @@ def build_compliance_agent() -> Agent:
     )
 
 
-def build_prompt(documents: list[SourceDocument]) -> str:
+def build_prompt(documents: list[SourceDocument], known_fields: list[str] | None = None) -> str:
     parts = [f"Analise os {len(documents)} documento(s) abaixo e aponte as divergências.\n"]
     for doc in documents:
         declared = f" tipo_declarado='{doc.declared_type}'" if doc.declared_type else ""
         parts.append(f"<documento nome='{doc.name}'{declared}>\n{doc.text}\n</documento>")
+    if known_fields:
+        listed = ", ".join(known_fields)
+        parts.append(
+            "Campos já registrados neste embarque: "
+            f"{listed}. Se a divergência for a mesma, reutilize exatamente um desses nomes em field."
+        )
     return "\n\n".join(parts)
 
 
@@ -91,8 +97,10 @@ class ComplianceAnalyzer:
             self._agent = build_compliance_agent()
         return self._agent
 
-    async def analyze(self, documents: list[SourceDocument]) -> AnalysisResult:
-        response = await self.agent.arun(build_prompt(documents))
+    async def analyze(
+        self, documents: list[SourceDocument], known_fields: list[str] | None = None
+    ) -> AnalysisResult:
+        response = await self.agent.arun(build_prompt(documents, known_fields))
         # O Agno não lança exceção em erro do provedor: devolve a mensagem como conteúdo.
         if response.status == RunStatus.error:
             raise AnalyzerError(f"Erro do provedor de IA: {response.content}")

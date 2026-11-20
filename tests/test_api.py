@@ -619,22 +619,147 @@ def test_reanalysis_updates_existing_alert_without_duplicating(
     assert client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()["status"] == "VALIDATED"
 
 
-def test_shipments_search_filters_by_custom_identifier(client, operator_headers):
-    first = client.post(
-        "/shipments",
-        headers=operator_headers,
-        json={"origin": "Santos", "destination": "Roterdã", "shipment_id_custom": "SHP-FIND-1"},
-    )
-    second = client.post(
-        "/shipments",
-        headers=operator_headers,
-        json={"origin": "Santos", "destination": "Hamburgo", "shipment_id_custom": "SHP-OTHER-2"},
-    )
-    assert first.status_code == 201, first.text
-    assert second.status_code == 201, second.text
+def test_reanalysis_reuses_field_ignoring_unit_suffix(
+    client, operator_headers, manager_headers, session_factory, analyzer
+):
+    from app.models import Alert
 
-    found = client.get("/shipments", headers=operator_headers, params={"search": "find-1"}).json()
-    assert [item["shipment_id_custom"] for item in found] == ["SHP-FIND-1"]
+    shipment_id = _shipment_with_weight_divergence(client, operator_headers, "SHP-STATUS-3")
+    with session_factory() as db:
+        treated = Alert(
+            field="Peso bruto (kg)",
+            severity="MEDIA",
+            description="Peso bruto (kg): texto antigo",
+            status="DISMISSED",
+            resolution_note="Falso positivo",
+            shipment_id=uuid.UUID(shipment_id),
+        )
+        db.add(treated)
+        db.commit()
+        treated_id = str(treated.id)
+
+    validation = client.post(f"/shipments/{shipment_id}/validate", headers=operator_headers)
+    assert validation.status_code == 200, validation.text
+    assert analyzer.known_fields == ["Peso bruto (kg)"]
+    alerts = client.get("/alerts", headers=manager_headers, params={"shipment_id": shipment_id}).json()
+    assert [item["id"] for item in alerts] == [treated_id]
+    assert alerts[0]["status"] == "DISMISSED"
+    assert alerts[0]["resolution_note"] == "Falso positivo"
+    assert alerts[0]["severity"] == "ALTA"
+
+
+def test_shipments_search_filters_by_custom_identifier(client, operator_headers):
+    created = []
+    for custom_id, destination in (
+        ("SHP-FIND-1", "Roterdã"),
+        ("SHP-FIND-1-extra", "Hamburgo"),
+        ("SHP-OTHER-2", "Santos"),
+        ("SHP-2026-0012", "Roterdã"),
+        ("SHP-2026-0012-B", "Hamburgo"),
+        ("SHP-2026-0013", "Santos"),
+    ):
+        response = client.post(
+            "/shipments",
+            headers=operator_headers,
+            json={"origin": "Santos", "destination": destination, "shipment_id_custom": custom_id},
+        )
+        assert response.status_code == 201, response.text
+        created.append(custom_id)
+
+    prefix = client.get("/shipments", headers=operator_headers, params={"search": "SHP-FIND-1"}).json()
+    assert sorted(item["shipment_id_custom"] for item in prefix) == ["SHP-FIND-1", "SHP-FIND-1-extra"]
+
+    middle = client.get("/shipments", headers=operator_headers, params={"search": "find-1"}).json()
+    assert middle == []
+
+    pasted = client.get("/shipments", headers=operator_headers, params={"search": "SHP-2026-0012"}).json()
+    assert sorted(item["shipment_id_custom"] for item in pasted) == ["SHP-2026-0012", "SHP-2026-0012-B"]
+    assert "SHP-2026-0013" not in {item["shipment_id_custom"] for item in pasted}
+    assert len(created) == 6
+
+
+def test_delete_document_and_evidence(client, operator_headers, manager_headers, session_factory):
+    import pytest
+    from sqlalchemy import select
+
+    from app.models import Document, Evidence
+    from app.services.storage_service import read_file
+
+    shipment = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã", "shipment_id_custom": "SHP-REPLACE-1"},
+    )
+    assert shipment.status_code == 201, shipment.text
+    shipment_id = shipment.json()["id"]
+    upload = client.post(
+        f"/shipments/{shipment_id}/documents",
+        headers=operator_headers,
+        files=[
+            ("files", ("bl.txt", b"Peso: 1 kg", "text/plain")),
+            ("files", ("foto.txt", b"Lacre: SL-1", "text/plain")),
+        ],
+        data={"types": ["BILL_OF_LADING", "CONTAINER_PHOTO"]},
+    )
+    assert upload.status_code == 201, upload.text
+
+    with session_factory() as db:
+        document = db.scalar(select(Document).where(Document.shipment_id == uuid.UUID(shipment_id)))
+        evidence = db.scalar(select(Evidence).where(Evidence.shipment_id == uuid.UUID(shipment_id)))
+        assert document is not None and evidence is not None
+        document_id = str(document.id)
+        document_key = document.url
+        evidence_id = str(evidence.id)
+        evidence_key = evidence.url
+        assert document.extraction is not None
+        assert evidence.extraction is not None
+
+    forbidden = client.delete(
+        f"/shipments/{shipment_id}/documents/{document_id}",
+        headers=manager_headers,
+    )
+    assert forbidden.status_code == 403
+
+    deleted = client.delete(
+        f"/shipments/{shipment_id}/documents/{document_id}",
+        headers=operator_headers,
+    )
+    assert deleted.status_code == 204
+    assert deleted.content == b""
+    with pytest.raises(FileNotFoundError):
+        read_file(document_key)
+
+    detail = client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()
+    assert detail["documents"] == []
+    assert [item["id"] for item in detail["evidences"]] == [evidence_id]
+
+    removed_evidence = client.delete(
+        f"/shipments/{shipment_id}/evidences/{evidence_id}",
+        headers=operator_headers,
+    )
+    assert removed_evidence.status_code == 204
+    with pytest.raises(FileNotFoundError):
+        read_file(evidence_key)
+    detail = client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()
+    assert detail["evidences"] == []
+
+    missing = client.delete(
+        f"/shipments/{shipment_id}/documents/{uuid.uuid4()}",
+        headers=operator_headers,
+    )
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Documento não encontrado"
+
+    empty = client.post(
+        f"/shipments/{shipment_id}/documents",
+        headers=operator_headers,
+        files=[("files", ("vazio.txt", b"", "text/plain"))],
+    )
+    assert empty.status_code == 422
+    assert "vazio" in empty.json()["detail"]
+
+    events = client.get(f"/shipments/{shipment_id}/events", headers=manager_headers).json()
+    assert [item["step"] for item in events[:2]] == ["EVIDENCE_DELETED", "DOCUMENT_DELETED"]
 
 
 def test_review_status_keeps_pending_without_actionable_alert(session_factory):
@@ -666,6 +791,18 @@ def test_review_status_keeps_pending_without_actionable_alert(session_factory):
         )
         sync_shipment_review_status(db, low_only)
         assert low_only.status == "VALIDATED"
+
+        db.add(
+            Alert(
+                field="peso bruto",
+                severity="ALTA",
+                description="peso: tratado",
+                status="DISMISSED",
+                shipment_id=inconclusive.id,
+            )
+        )
+        sync_shipment_review_status(db, inconclusive)
+        assert inconclusive.status == "VALIDATED"
 
 
 def test_validate_new_password_rules():

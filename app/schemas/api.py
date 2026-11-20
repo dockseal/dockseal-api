@@ -125,8 +125,8 @@ class ShipmentOut(ORMModel):
     expected_return: UtcDatetime | None
     returned_at: UtcDatetime | None
     status: ShipmentStatus = Field(
-        description="REGISTERED (cadastrado), VALIDATED (sem alerta aberto), "
-        "PENDING_REVIEW (alerta aberto, validação inconclusiva ou divergência sem alerta)"
+        description="REGISTERED (cadastrado), VALIDATED (alertas tratados ou análise conforme), "
+        "PENDING_REVIEW (alerta aberto ou análise sem alerta acionável)"
     )
     container: ContainerOut | None
     containers: list[ContainerOut]

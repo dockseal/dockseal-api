@@ -4,8 +4,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.agents.compliance_agent import ComplianceAnalyzer, get_analyzer
@@ -38,7 +38,7 @@ from app.services.audit_service import list_events, register_event
 from app.services.auth_service import Permissions
 from app.services.extraction_service import ExtractionService
 from app.services.validation_service import ValidationService
-from app.services.storage_service import save_file
+from app.services.storage_service import delete_file, save_file
 
 ISO_6346 = re.compile(r"^[A-Z]{4}\d{7}$")
 ISO_6346_DETAIL = "Número de contêiner inválido. Use o padrão ISO 6346: 4 letras e 7 números."
@@ -60,6 +60,7 @@ router = APIRouter(prefix="/shipments", tags=["Embarques"])
 
 Writer = Annotated[User, Depends(require_permission(Permissions.SHIPMENT_WRITE))]
 Reader = Annotated[User, Depends(require_permission(Permissions.SHIPMENT_READ))]
+Uploader = Annotated[User, Depends(require_permission(Permissions.DOCUMENT_UPLOAD))]
 
 
 def get_shipment_or_404(db: DbSession, shipment_id: uuid.UUID) -> Shipment:
@@ -159,12 +160,12 @@ def list_shipments(
     offset: int = 0,
     search: str | None = None,
 ):
-    """Mais recentes primeiro. Paginação por `limit` e `offset`. `search` filtra o identificador."""
+    """Mais recentes primeiro. Paginação por `limit` e `offset`. `search` filtra pelo início do identificador."""
     query = select(Shipment).order_by(Shipment.created_at.desc())
     term = search.strip() if search else ""
     if term:
         escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        query = query.where(Shipment.shipment_id_custom.ilike(f"%{escaped}%", escape="\\"))
+        query = query.where(Shipment.shipment_id_custom.ilike(f"{escaped}%", escape="\\"))
     return db.scalars(query.limit(limit).offset(offset)).all()
 
 
@@ -213,6 +214,20 @@ def add_container(db: DbSession, user: Writer, shipment_id: uuid.UUID, data: Con
     return shipment
 
 
+def discard_stored_file(key: str) -> None:
+    try:
+        delete_file(key)
+    except ValueError:
+        return
+
+
+def delete_extraction_row(db: DbSession, extraction: Extraction | None) -> None:
+    if extraction is None:
+        return
+    db.execute(update(Validation).where(Validation.extraction_id == extraction.id).values(extraction_id=None))
+    db.delete(extraction)
+
+
 @router.post(
     "/{shipment_id}/documents",
     response_model=list[DocumentOut],
@@ -227,7 +242,7 @@ def add_container(db: DbSession, user: Writer, shipment_id: uuid.UUID, data: Con
 )
 async def upload_documents(
     db: DbSession,
-    user: Annotated[User, Depends(require_permission(Permissions.DOCUMENT_UPLOAD))],
+    user: Uploader,
     shipment_id: uuid.UUID,
     files: Annotated[list[UploadFile], File()],
     types: Annotated[list[str] | None, Form(description="Tipo de cada arquivo, na mesma ordem")] = None,
@@ -276,6 +291,55 @@ async def upload_documents(
     )
     db.commit()
     return documents
+
+
+@router.delete(
+    "/{shipment_id}/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remover documento do embarque",
+    responses={
+        404: {"description": "Embarque ou documento não encontrado"},
+        403: {"description": "Usuário sem permissão para esta ação"},
+    },
+)
+def delete_document(db: DbSession, user: Uploader, shipment_id: uuid.UUID, document_id: uuid.UUID):
+    """Remove o arquivo, a extração e o registro. O embarque pode ficar sem documentos."""
+    get_shipment_or_404(db, shipment_id)
+    document = db.scalar(select(Document).where(Document.id == document_id, Document.shipment_id == shipment_id))
+    if document is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Documento não encontrado")
+    filename = document.filename
+    key = document.url
+    delete_extraction_row(db, document.extraction)
+    db.delete(document)
+    discard_stored_file(key)
+    register_event(db, "DOCUMENT_DELETED", user_id=user.id, shipment_id=shipment_id, observation=filename)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/{shipment_id}/evidences/{evidence_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remover evidência do embarque",
+    responses={
+        404: {"description": "Embarque ou evidência não encontrada"},
+        403: {"description": "Usuário sem permissão para esta ação"},
+    },
+)
+def delete_evidence(db: DbSession, user: Uploader, shipment_id: uuid.UUID, evidence_id: uuid.UUID):
+    """Remove a foto ou arquivo de evidência e a extração ligada a ele."""
+    get_shipment_or_404(db, shipment_id)
+    evidence = db.scalar(select(Evidence).where(Evidence.id == evidence_id, Evidence.shipment_id == shipment_id))
+    if evidence is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Evidência não encontrada")
+    key = evidence.url
+    delete_extraction_row(db, evidence.extraction)
+    db.delete(evidence)
+    discard_stored_file(key)
+    register_event(db, "EVIDENCE_DELETED", user_id=user.id, shipment_id=shipment_id, observation=key)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

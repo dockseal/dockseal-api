@@ -24,9 +24,13 @@ class FakeAnalyzer:
 
     def __init__(self):
         self.received: list[SourceDocument] = []
+        self.known_fields: list[str] | None = None
 
-    async def analyze(self, documents: list[SourceDocument]) -> AnalysisResult:
+    async def analyze(
+        self, documents: list[SourceDocument], known_fields: list[str] | None = None
+    ) -> AnalysisResult:
         self.received = documents
+        self.known_fields = known_fields
         weights = {d.name: d.text.split("Peso:")[1].split()[0] for d in documents if "Peso:" in d.text}
         divergent = len(set(weights.values())) > 1
         divergences = []

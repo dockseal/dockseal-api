@@ -505,6 +505,169 @@ def test_admin_user_crud_and_audit(client, admin_headers):
     assert client.delete(f"/users/{missing}", headers=admin_headers).status_code == 404
 
 
+def _shipment_with_weight_divergence(client, operator_headers, custom_id: str) -> str:
+    shipment = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã", "shipment_id_custom": custom_id},
+    )
+    assert shipment.status_code == 201, shipment.text
+    shipment_id = shipment.json()["id"]
+    upload = client.post(
+        f"/shipments/{shipment_id}/documents",
+        headers=operator_headers,
+        files=[
+            ("files", ("bl.txt", b"Peso: 2000 kg", "text/plain")),
+            ("files", ("manifesto.txt", b"Peso: 10000 kg", "text/plain")),
+        ],
+        data={"types": ["BILL_OF_LADING", "MANIFESTO_CARGA"]},
+    )
+    assert upload.status_code == 201, upload.text
+    return shipment_id
+
+
+def test_treating_alerts_updates_shipment_review_status(client, operator_headers, manager_headers, session_factory):
+    from app.models import Alert
+
+    shipment_id = _shipment_with_weight_divergence(client, operator_headers, "SHP-STATUS-1")
+    validation = client.post(f"/shipments/{shipment_id}/validate", headers=operator_headers)
+    assert validation.status_code == 200, validation.text
+    assert client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()["status"] == "PENDING_REVIEW"
+
+    with session_factory() as db:
+        extra = Alert(
+            field="lacre",
+            severity="CRITICA",
+            description="lacre: lacre divergente",
+            status="OPEN",
+            shipment_id=uuid.UUID(shipment_id),
+        )
+        db.add(extra)
+        db.commit()
+        extra_id = str(extra.id)
+
+    alerts = client.get("/alerts", headers=manager_headers, params={"shipment_id": shipment_id}).json()
+    weight = next(item for item in alerts if item["id"] != extra_id)
+    resolved = client.patch(f"/alerts/{weight['id']}", headers=manager_headers, json={"status": "RESOLVED"})
+    assert resolved.status_code == 200, resolved.text
+    assert client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()["status"] == "PENDING_REVIEW"
+
+    closed = client.patch(f"/alerts/{extra_id}", headers=manager_headers, json={"status": "CLOSED"})
+    assert closed.status_code == 200, closed.text
+    assert client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()["status"] == "VALIDATED"
+
+    reopened = client.patch(f"/alerts/{weight['id']}", headers=manager_headers, json={"status": "OPEN"})
+    assert reopened.status_code == 200, reopened.text
+    detail = client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()
+    assert detail["status"] == "PENDING_REVIEW"
+
+
+def test_reanalysis_updates_existing_alert_without_duplicating(
+    client, operator_headers, manager_headers, session_factory
+):
+    from app.models import Alert
+
+    shipment_id = _shipment_with_weight_divergence(client, operator_headers, "SHP-STATUS-2")
+    with session_factory() as db:
+        legacy = Alert(
+            severity="MEDIA",
+            description="Peso Bruto: texto antigo",
+            status="OPEN",
+            shipment_id=uuid.UUID(shipment_id),
+        )
+        gone = Alert(
+            field="lacre",
+            severity="ALTA",
+            description="lacre: lacre antigo",
+            status="OPEN",
+            shipment_id=uuid.UUID(shipment_id),
+        )
+        db.add_all([legacy, gone])
+        db.commit()
+        legacy_id = str(legacy.id)
+        gone_id = str(gone.id)
+
+    validation = client.post(f"/shipments/{shipment_id}/validate", headers=operator_headers)
+    assert validation.status_code == 200, validation.text
+    alerts = client.get("/alerts", headers=manager_headers, params={"shipment_id": shipment_id}).json()
+    assert {item["id"] for item in alerts} == {legacy_id, gone_id}
+    updated = next(item for item in alerts if item["id"] == legacy_id)
+    assert updated["status"] == "OPEN"
+    assert updated["severity"] == "ALTA"
+    assert updated["description"].startswith("peso bruto:")
+    removed = next(item for item in alerts if item["id"] == gone_id)
+    assert removed["status"] == "RESOLVED"
+    assert removed["resolution_note"] == "Divergência não encontrada na nova análise."
+    assert client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()["status"] == "PENDING_REVIEW"
+
+    dismissed = client.patch(
+        f"/alerts/{legacy_id}",
+        headers=manager_headers,
+        json={"status": "DISMISSED", "resolution_note": "Falso positivo"},
+    )
+    assert dismissed.status_code == 200, dismissed.text
+    assert client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()["status"] == "VALIDATED"
+
+    again = client.post(f"/shipments/{shipment_id}/validate", headers=operator_headers)
+    assert again.status_code == 200, again.text
+    alerts_again = client.get("/alerts", headers=manager_headers, params={"shipment_id": shipment_id}).json()
+    assert len(alerts_again) == 2
+    kept = next(item for item in alerts_again if item["id"] == legacy_id)
+    assert kept["status"] == "DISMISSED"
+    assert kept["resolution_note"] == "Falso positivo"
+    assert kept["severity"] == "ALTA"
+    assert client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()["status"] == "VALIDATED"
+
+
+def test_shipments_search_filters_by_custom_identifier(client, operator_headers):
+    first = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã", "shipment_id_custom": "SHP-FIND-1"},
+    )
+    second = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Hamburgo", "shipment_id_custom": "SHP-OTHER-2"},
+    )
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+
+    found = client.get("/shipments", headers=operator_headers, params={"search": "find-1"}).json()
+    assert [item["shipment_id_custom"] for item in found] == ["SHP-FIND-1"]
+
+
+def test_review_status_keeps_pending_without_actionable_alert(session_factory):
+    from app.models import Alert, Shipment, Validation
+    from app.services.validation_service import sync_shipment_review_status
+
+    with session_factory() as db:
+        inconclusive = Shipment(origin="Santos", destination="Roterdã", status="PENDING_REVIEW")
+        low_only = Shipment(origin="Santos", destination="Hamburgo", status="PENDING_REVIEW")
+        db.add_all([inconclusive, low_only])
+        db.flush()
+        db.add(Validation(status="INCONCLUSIVO", details="Texto insuficiente", result={}, shipment_id=inconclusive.id))
+        db.add(Validation(status="DIVERGENTE", details="Grafia", result={}, shipment_id=low_only.id))
+        db.commit()
+
+        sync_shipment_review_status(db, inconclusive)
+        sync_shipment_review_status(db, low_only)
+        assert inconclusive.status == "PENDING_REVIEW"
+        assert low_only.status == "PENDING_REVIEW"
+
+        db.add(
+            Alert(
+                field="grafia",
+                severity="BAIXA",
+                description="grafia: diferença de acento",
+                status="RESOLVED",
+                shipment_id=low_only.id,
+            )
+        )
+        sync_shipment_review_status(db, low_only)
+        assert low_only.status == "VALIDATED"
+
+
 def test_validate_new_password_rules():
     import pytest
 

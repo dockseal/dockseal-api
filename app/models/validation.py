@@ -24,6 +24,7 @@ class Validation(IdMixin, TimestampMixin, Base):
 class Alert(IdMixin, TimestampMixin, Base):
     __tablename__ = "alert"
 
+    field: Mapped[str | None] = mapped_column(String(150))
     severity: Mapped[str] = mapped_column(String(20))
     description: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="OPEN")

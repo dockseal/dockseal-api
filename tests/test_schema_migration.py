@@ -28,6 +28,7 @@ def test_ensure_schema_adds_columns_and_backfills_once():
         connection.execute(text("ALTER TABLE shipment DROP COLUMN transport_company"))
         connection.execute(text("ALTER TABLE shipment DROP COLUMN expected_arrival"))
         connection.execute(text("ALTER TABLE alert DROP COLUMN resolution_note"))
+        connection.execute(text("ALTER TABLE alert DROP COLUMN field"))
         connection.execute(
             text(
                 """
@@ -51,7 +52,7 @@ def test_ensure_schema_adds_columns_and_backfills_once():
     shipment_columns = {column["name"] for column in inspect(engine).get_columns("shipment")}
     alert_columns = {column["name"] for column in inspect(engine).get_columns("alert")}
     assert {"shipment_id_custom", "transport_company", "expected_arrival"} <= shipment_columns
-    assert "resolution_note" in alert_columns
+    assert {"resolution_note", "field"} <= alert_columns
 
     with engine.connect() as connection:
         count = connection.execute(text("SELECT COUNT(*) FROM shipment_container")).scalar()

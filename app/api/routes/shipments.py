@@ -152,10 +152,20 @@ def create_shipment(db: DbSession, user: Writer, data: ShipmentIn):
 
 
 @router.get("", response_model=list[ShipmentOut], summary="Listar embarques")
-def list_shipments(db: DbSession, _: Reader, limit: int = 50, offset: int = 0):
-    """Mais recentes primeiro. Paginação por `limit` e `offset`."""
-    query = select(Shipment).order_by(Shipment.created_at.desc()).limit(limit).offset(offset)
-    return db.scalars(query).all()
+def list_shipments(
+    db: DbSession,
+    _: Reader,
+    limit: int = 50,
+    offset: int = 0,
+    search: str | None = None,
+):
+    """Mais recentes primeiro. Paginação por `limit` e `offset`. `search` filtra o identificador."""
+    query = select(Shipment).order_by(Shipment.created_at.desc())
+    term = search.strip() if search else ""
+    if term:
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.where(Shipment.shipment_id_custom.ilike(f"%{escaped}%", escape="\\"))
+    return db.scalars(query.limit(limit).offset(offset)).all()
 
 
 @router.get(

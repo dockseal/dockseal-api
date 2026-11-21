@@ -17,7 +17,7 @@ def test_ensure_schema_adds_columns_and_backfills_once():
     now = datetime.now(UTC)
 
     with Session(engine) as db:
-        db.add(Container(id=container_id, container_number="MSCU7742123", status="AVAILABLE"))
+        db.add(Container(id=container_id, container_number="MSCU7742121", status="AVAILABLE"))
         db.commit()
 
     with engine.begin() as connection:

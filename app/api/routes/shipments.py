@@ -1,4 +1,3 @@
-import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,12 +35,19 @@ from app.schemas.api import (
 )
 from app.services.audit_service import list_events, register_event
 from app.services.auth_service import Permissions
+from app.services.container_number import (
+    ISO_STANDARD_CODE,
+    container_check_digit,
+    has_container_number_format,
+    has_valid_check_digit,
+    normalize_container_number,
+)
 from app.services.extraction_service import ExtractionService
 from app.services.validation_service import ValidationService
 from app.services.storage_service import delete_file, save_file
 
-ISO_6346 = re.compile(r"^[A-Z]{4}\d{7}$")
 ISO_6346_DETAIL = "Número de contêiner inválido. Use o padrão ISO 6346: 4 letras e 7 números."
+CHECK_DIGIT_DETAIL = "Dígito verificador inválido."
 CONTAINER_IN_TRANSIT_DETAIL = "Contêiner já está em trânsito em outro embarque"
 DUPLICATE_SHIPMENT_ID_DETAIL = "Identificador de embarque já cadastrado"
 INVALID_DOCUMENT_TYPE_DETAIL = "Tipo de documento inválido"
@@ -70,20 +76,32 @@ def get_shipment_or_404(db: DbSession, shipment_id: uuid.UUID) -> Shipment:
     return shipment
 
 
-def normalize_container_number(raw: str) -> str:
-    number = raw.replace(" ", "").replace("-", "").upper()
-    if ISO_6346.fullmatch(number) is None:
+def validate_container_number(raw: str) -> str:
+    number = normalize_container_number(raw)
+    if not has_container_number_format(number):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=ISO_6346_DETAIL)
+    if not has_valid_check_digit(number):
+        expected = container_check_digit(number)
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"{CHECK_DIGIT_DETAIL} O correto para {number[:10]} é {expected}.",
+        )
     return number
 
 
 def get_or_create_container(db: DbSession, data: ContainerIn) -> Container:
-    number = normalize_container_number(data.container_number)
+    number = validate_container_number(data.container_number)
     container = db.scalar(select(Container).where(Container.container_number == number))
     if container is None:
-        container = Container(**data.model_dump(exclude={"container_number"}), container_number=number)
+        container = Container(
+            **data.model_dump(exclude={"container_number", "iso_code"}),
+            container_number=number,
+            iso_code=ISO_STANDARD_CODE,
+        )
         db.add(container)
         db.flush()
+    elif container.iso_code != ISO_STANDARD_CODE:
+        container.iso_code = ISO_STANDARD_CODE
     return container
 
 
@@ -128,6 +146,14 @@ def create_shipment(db: DbSession, user: Writer, data: ShipmentIn):
     if data.dispatched_at and data.expected_return and data.expected_return < data.dispatched_at:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Retorno previsto não pode ser anterior ao despacho"
+        )
+    if data.dispatched_at and data.expected_arrival and data.expected_arrival < data.dispatched_at:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Chegada prevista não pode ser anterior ao despacho"
+        )
+    if data.expected_arrival and data.expected_return and data.expected_return < data.expected_arrival:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Retorno previsto não pode ser anterior à chegada prevista"
         )
     start_of_today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     if data.expected_arrival is not None and data.expected_arrival < start_of_today:

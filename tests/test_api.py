@@ -80,11 +80,11 @@ def test_shipment_flow_generates_alert(client, operator_headers, manager_headers
     shipment = client.post(
         "/shipments",
         headers=operator_headers,
-        json={"origin": "Santos", "destination": "Roterdã", "container": {"container_number": "MSCU 123456-7"}},
+        json={"origin": "Santos", "destination": "Roterdã", "container": {"container_number": "MSCU 123456-6"}},
     )
     assert shipment.status_code == 201, shipment.text
     shipment_id = shipment.json()["id"]
-    assert shipment.json()["container"]["container_number"] == "MSCU1234567"
+    assert shipment.json()["container"]["container_number"] == "MSCU1234566"
 
     upload = client.post(
         f"/shipments/{shipment_id}/documents",
@@ -196,6 +196,136 @@ def test_container_must_match_iso_6346(client, operator_headers):
     assert response.json()["detail"] == "Número de contêiner inválido. Use o padrão ISO 6346: 4 letras e 7 números."
 
 
+def test_container_check_digit_is_validated(client, operator_headers):
+    response = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã", "container": {"container_number": "MSCU1234567"}},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Dígito verificador inválido. O correto para MSCU123456 é 6."
+
+
+def test_reference_container_numbers_have_valid_check_digit():
+    from app.services.container_number import container_check_digit, has_valid_check_digit
+
+    assert container_check_digit("CSQU305438") == 3
+    for number in ("CSQU3054383", "MSCU1234566", "MSCU7742121", "DKSU4829158", "TGHU7654320"):
+        assert has_valid_check_digit(number), number
+    assert not has_valid_check_digit("CSQU3054384")
+
+
+def test_container_routes_validate_check_digit_and_format(client, operator_headers):
+    shipment_id = client.post(
+        "/shipments", headers=operator_headers, json={"origin": "Santos", "destination": "Roterdã"}
+    ).json()["id"]
+
+    for method, path in (("post", f"/shipments/{shipment_id}/containers"), ("put", f"/shipments/{shipment_id}/container")):
+        wrong_digit = getattr(client, method)(path, headers=operator_headers, json={"container_number": "CSQU3054384"})
+        assert wrong_digit.status_code == 422
+        assert wrong_digit.json()["detail"] == "Dígito verificador inválido. O correto para CSQU305438 é 3."
+
+        wrong_format = getattr(client, method)(path, headers=operator_headers, json={"container_number": "CSQ3054383"})
+        assert wrong_format.status_code == 422
+        assert wrong_format.json()["detail"].startswith("Número de contêiner inválido.")
+
+    accepted = client.post(
+        f"/shipments/{shipment_id}/containers", headers=operator_headers, json={"container_number": "csqu 305438-3"}
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["container"]["container_number"] == "CSQU3054383"
+
+
+def test_container_iso_code_is_always_set_by_the_server(client, operator_headers):
+    shipment_id = client.post(
+        "/shipments", headers=operator_headers, json={"origin": "Santos", "destination": "Roterdã"}
+    ).json()["id"]
+
+    for number, sent in (("CSQU3054383", "22G1"), ("TGHU7654320", ""), ("DKSU4829158", "x" * 500)):
+        response = client.post(
+            f"/shipments/{shipment_id}/containers",
+            headers=operator_headers,
+            json={"container_number": number, "iso_code": sent},
+        )
+        assert response.status_code == 200, (sent[:10], response.text)
+
+    containers = client.get(f"/shipments/{shipment_id}", headers=operator_headers).json()["containers"]
+    assert [item["iso_code"] for item in containers] == ["6346", "6346", "6346"]
+
+    omitted = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={"origin": "Santos", "destination": "Roterdã", "container": {"container_number": "MSCU7654329"}},
+    )
+    assert omitted.status_code == 201, omitted.text
+    assert omitted.json()["container"]["iso_code"] == "6346"
+
+
+def test_existing_container_iso_code_is_reset_to_standard(client, operator_headers, session_factory):
+    from sqlalchemy import select
+
+    from app.models import Container
+
+    with session_factory() as db:
+        db.add(Container(container_number="CSQU3054383", iso_code="OLD", status="AVAILABLE"))
+        db.commit()
+
+    shipment_id = client.post(
+        "/shipments", headers=operator_headers, json={"origin": "Santos", "destination": "Roterdã"}
+    ).json()["id"]
+    response = client.put(
+        f"/shipments/{shipment_id}/container",
+        headers=operator_headers,
+        json={"container_number": "CSQU3054383", "iso_code": "22G1"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["container"]["iso_code"] == "6346"
+    with session_factory() as db:
+        assert db.scalar(select(Container.iso_code).where(Container.container_number == "CSQU3054383")) == "6346"
+
+
+def test_nonexistent_dates_are_rejected(client, operator_headers):
+    for field in ("dispatched_at", "expected_arrival", "expected_return"):
+        for value in ("2099-11-31T10:00:00Z", "2099-02-30T10:00:00Z", "2099-02-29T10:00:00Z", "2099-13-01T10:00:00Z", "abc"):
+            response = client.post(
+                "/shipments",
+                headers=operator_headers,
+                json={"origin": "Santos", "destination": "Roterdã", field: value},
+            )
+            assert response.status_code == 422, (field, value)
+            error = response.json()["detail"][0]
+            assert error["loc"][-1] == field
+            assert error["msg"] == "Value error, Informe uma data válida."
+
+
+def test_arrival_before_dispatch_and_return_before_arrival_are_rejected(client, operator_headers):
+    arrival = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={
+            "origin": "Santos",
+            "destination": "Roterdã",
+            "dispatched_at": "2099-01-10T10:00:00Z",
+            "expected_arrival": "2099-01-09T10:00:00Z",
+        },
+    )
+    assert arrival.status_code == 422
+    assert arrival.json()["detail"] == "Chegada prevista não pode ser anterior ao despacho"
+
+    returned = client.post(
+        "/shipments",
+        headers=operator_headers,
+        json={
+            "origin": "Santos",
+            "destination": "Roterdã",
+            "expected_arrival": "2099-01-10T10:00:00Z",
+            "expected_return": "2099-01-09T10:00:00Z",
+        },
+    )
+    assert returned.status_code == 422
+    assert returned.json()["detail"] == "Retorno previsto não pode ser anterior à chegada prevista"
+
+
 def test_container_in_transit_on_another_open_shipment_is_rejected(client, operator_headers, session_factory):
     from datetime import UTC, datetime
 
@@ -211,7 +341,7 @@ def test_container_in_transit_on_another_open_shipment_is_rejected(client, opera
     attached = client.post(
         f"/shipments/{first_id}/containers",
         headers=operator_headers,
-        json={"container_number": "MSCU7742123"},
+        json={"container_number": "MSCU7742121"},
     )
     assert attached.status_code == 200, attached.text
 
@@ -224,7 +354,7 @@ def test_container_in_transit_on_another_open_shipment_is_rejected(client, opera
     blocked = client.post(
         f"/shipments/{second_id}/containers",
         headers=operator_headers,
-        json={"container_number": "MSCU7742123"},
+        json={"container_number": "MSCU7742121"},
     )
     assert blocked.status_code == 422
     assert blocked.json()["detail"] == "Contêiner já está em trânsito em outro embarque"
@@ -232,17 +362,17 @@ def test_container_in_transit_on_another_open_shipment_is_rejected(client, opera
     added = client.post(
         f"/shipments/{first_id}/containers",
         headers=operator_headers,
-        json={"container_number": "MSCU7742124"},
+        json={"container_number": "MSCU7742137"},
     )
     assert added.status_code == 200, added.text
     body = added.json()
-    assert body["container"]["container_number"] == "MSCU7742123"
-    assert [item["container_number"] for item in body["containers"]] == ["MSCU7742123", "MSCU7742124"]
+    assert body["container"]["container_number"] == "MSCU7742121"
+    assert [item["container_number"] for item in body["containers"]] == ["MSCU7742121", "MSCU7742137"]
 
     repeated = client.post(
         f"/shipments/{first_id}/containers",
         headers=operator_headers,
-        json={"container_number": "MSCU7742124"},
+        json={"container_number": "MSCU7742137"},
     )
     assert repeated.status_code == 200, repeated.text
     assert len(repeated.json()["containers"]) == 2
@@ -260,22 +390,22 @@ def test_container_in_transit_on_another_open_shipment_is_rejected(client, opera
     reused = client.post(
         f"/shipments/{third.json()['id']}/containers",
         headers=operator_headers,
-        json={"container_number": "MSCU7742123"},
+        json={"container_number": "MSCU7742121"},
     )
     assert reused.status_code == 200, reused.text
 
     replaced = client.put(
         f"/shipments/{first_id}/container",
         headers=operator_headers,
-        json={"container_number": "MSCU7742125"},
+        json={"container_number": "MSCU7742142"},
     )
     assert replaced.status_code == 200, replaced.text
     replaced_body = replaced.json()
-    assert replaced_body["container"]["container_number"] == "MSCU7742125"
+    assert replaced_body["container"]["container_number"] == "MSCU7742142"
     assert [item["container_number"] for item in replaced_body["containers"]] == [
-        "MSCU7742123",
-        "MSCU7742124",
-        "MSCU7742125",
+        "MSCU7742121",
+        "MSCU7742137",
+        "MSCU7742142",
     ]
 
 

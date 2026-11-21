@@ -227,14 +227,14 @@ const res = await fetch(`${API}/analysis`, {
   "divergences": [
     {
       "field": "número do contêiner",
-      "description": "O número do contêiner no Manifesto de Carga (MSCU7654321) difere do Bill of Lading e da Nota Fiscal (MSCU1234567).",
+      "description": "O número do contêiner no Manifesto de Carga (MSCU7654329) difere do Bill of Lading e da Nota Fiscal (MSCU1234566).",
       "occurrences": [
-        { "document": "bill_of_lading.pdf", "value": "MSCU1234567", "excerpt": "Container: MSCU1234567" },
-        { "document": "nota_fiscal.docx", "value": "MSCU1234567", "excerpt": "Contêiner MSCU1234567" },
-        { "document": "manifesto.txt", "value": "MSCU7654321", "excerpt": "Contêiner: MSCU7654321" }
+        { "document": "bill_of_lading.pdf", "value": "MSCU1234566", "excerpt": "Container: MSCU1234566" },
+        { "document": "nota_fiscal.docx", "value": "MSCU1234566", "excerpt": "Contêiner MSCU1234566" },
+        { "document": "manifesto.txt", "value": "MSCU7654329", "excerpt": "Contêiner: MSCU7654329" }
       ],
       "severity": "CRITICA",
-      "suggestion": "Corrigir o número do contêiner no Manifesto de Carga para MSCU1234567.",
+      "suggestion": "Corrigir o número do contêiner no Manifesto de Carga para MSCU1234566.",
       "document_to_fix": "manifesto.txt",
       "confidence": 1.0
     }
@@ -286,11 +286,11 @@ Cria um embarque. Corpo **JSON**.
 | `shipment_id_custom` | string | | Identificador visível, único quando informado. Só espaços viram `null` |
 | `transport_company` | string | | Transportadora |
 | `dispatched_at` | string ISO | | Data de despacho |
-| `expected_arrival` | string ISO | | Chegada prevista. Não pode ser anterior ao início do dia UTC atual |
-| `expected_return` | string ISO | | Não pode ser anterior a `dispatched_at` |
+| `expected_arrival` | string ISO | | Chegada prevista. Não pode ser anterior ao início do dia UTC atual nem ao `dispatched_at` |
+| `expected_return` | string ISO | | Não pode ser anterior a `dispatched_at` nem a `expected_arrival` |
 | `container` | objeto | | Pode ser associado depois |
-| `container.container_number` | string (4–20) | ✅ se enviar `container` | Depois de tirar espaços e hífens, precisa ser ISO 6346: 4 letras e 7 números. `"MSCU 123456-7"` vira `"MSCU1234567"` |
-| `container.iso_code` | string | | Ex.: `"22G1"` |
+| `container.container_number` | string (4–20) | ✅ se enviar `container` | Depois de tirar espaços e hífens, precisa ser ISO 6346: 4 letras, 7 números e o dígito verificador correto. `"MSCU 123456-6"` vira `"MSCU1234566"` |
+| `container.iso_code` | string | | **Ignorado.** O servidor sempre grava `"6346"` (código da norma ISO), seja qual for o valor enviado |
 | `container.type` | string | | Ex.: `"Dry 20'"` |
 | `container.owner` | string | | Ex.: `"MSC"` |
 
@@ -300,7 +300,7 @@ Cria um embarque. Corpo **JSON**.
   "destination": "Roterdã",
   "dispatched_at": "2026-10-03T10:00:00Z",
   "expected_return": "2026-11-03T10:00:00Z",
-  "container": { "container_number": "MSCU 123456-7", "iso_code": "22G1", "owner": "MSC" }
+  "container": { "container_number": "MSCU 123456-6", "owner": "MSC" }
 }
 ```
 
@@ -309,7 +309,7 @@ Cria um embarque. Corpo **JSON**.
 | Erro | Quando |
 |---|---|
 | 403 | Usuário sem `shipment:write` (ex.: GESTOR) |
-| 422 | Campo obrigatório faltando ou vazio, retorno anterior ao despacho, `expected_arrival` no passado (`Data de chegada prevista não pode ser anterior a hoje`), `shipment_id_custom` repetido (`Identificador de embarque já cadastrado`) ou número de contêiner fora da ISO 6346 |
+| 422 | Campo obrigatório faltando ou vazio, data inexistente (ex.: 31/11, 30/02) ou ilegível (`detail` em lista, com `loc` apontando o campo e `msg` = `Value error, Informe uma data válida.`), retorno anterior ao despacho, chegada anterior ao despacho (`Chegada prevista não pode ser anterior ao despacho`), retorno anterior à chegada (`Retorno previsto não pode ser anterior à chegada prevista`), `expected_arrival` no passado (`Data de chegada prevista não pode ser anterior a hoje`), `shipment_id_custom` repetido (`Identificador de embarque já cadastrado`) ou número de contêiner inválido (formato ou dígito verificador, veja abaixo) |
 
 ---
 
@@ -347,8 +347,8 @@ Detalhe do embarque, com documentos, evidências e a lista `containers`. `contai
   "status": "PENDING_REVIEW",
   "container": {
     "id": "f83bdc18-8e51-4e71-84a5-8b0d842f9511",
-    "container_number": "MSCU1234567",
-    "iso_code": "22G1",
+    "container_number": "MSCU1234566",
+    "iso_code": "6346",
     "type": null,
     "owner": "MSC",
     "status": "IN_TRANSIT"
@@ -379,14 +379,19 @@ Status do embarque:
 
 #### `PUT /shipments/{id}/container`
 
-Troca o contêiner principal (`container`) e também o inclui em `containers`. Não remove os contêineres já associados. Se o número já existir, reaproveita o cadastro e não altera `iso_code`, `type` nem `owner`.
+Troca o contêiner principal (`container`) e também o inclui em `containers`. Não remove os contêineres já associados. Se o número já existir, reaproveita o cadastro e não altera `type` nem `owner`. O `iso_code` é sempre `"6346"`: o servidor ignora o valor enviado (e corrige cadastros antigos ao reaproveitá-los).
 
-O número, depois de tirar espaços e hífens, precisa casar com `^[A-Z]{4}\d{7}$`. Não há validação do dígito verificador.
+O número, depois de tirar espaços e hífens e passar para maiúsculas, precisa:
+
+1. casar com `^[A-Z]{4}\d{7}$`. Senão, **422** com `detail` `Número de contêiner inválido. Use o padrão ISO 6346: 4 letras e 7 números.`
+2. ter o dígito verificador ISO 6346 correto (11º caractere). Senão, **422** com `detail` como `Dígito verificador inválido. O correto para MSCU123456 é 6.`
+
+O dígito verificador **não é fixo**: é calculado a partir dos 10 primeiros caracteres. Letras valem A=10, B=12, C=13… (múltiplos de 11 são pulados), dígitos valem o próprio número, cada posição (0 a 9) é multiplicada por 2^posição, soma-se tudo, calcula-se `soma mod 11` e, se der 10, o dígito é 0. Exemplos válidos: `CSQU3054383`, `MSCU1234566`, `MSCU7742121`, `TGHU7654320`.
 
 Se esse contêiner já estiver ligado a outro embarque com `returned_at` nulo, a API responde **422** com `detail` `Contêiner já está em trânsito em outro embarque`. O status do embarque não entra nessa regra.
 
 ```json
-{ "container_number": "MSCU1234567", "iso_code": "22G1", "type": "Dry 20'", "owner": "MSC" }
+{ "container_number": "MSCU1234566", "type": "Dry 20'", "owner": "MSC" }
 ```
 
 **200** → o `Shipment` atualizado. Ao associar, `container.status` passa a `IN_TRANSIT`.

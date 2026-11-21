@@ -283,8 +283,7 @@ curl -X POST localhost:8000/shipments \
     "dispatched_at": "2026-10-03T10:00:00Z",
     "expected_return": "2026-11-03T10:00:00Z",
     "container": {
-      "container_number": "MSCU 123456-7",
-      "iso_code": "22G1",
+      "container_number": "MSCU 123456-6",
       "type": "Dry 20'",
       "owner": "MSC"
     }
@@ -295,7 +294,7 @@ curl -X POST localhost:8000/shipments \
 |---|:-:|---|
 | `origin`, `destination` | Sim | |
 | `dispatched_at`, `expected_return` | Não | ISO 8601. O retorno não pode ser anterior ao despacho |
-| `container` | Não | Pode ser associado depois. O número é normalizado (`MSCU 123456-7` → `MSCU1234567`) |
+| `container` | Não | Pode ser associado depois. O número é normalizado (`MSCU 123456-6` → `MSCU1234566`) e precisa ter o dígito verificador ISO 6346 correto. O `iso_code` enviado é ignorado: o servidor sempre grava `6346` |
 
 Guarde o `id` da resposta. Nos exemplos abaixo ele aparece como `ID_DO_EMBARQUE`.
 
@@ -305,7 +304,7 @@ Guarde o `id` da resposta. Nos exemplos abaixo ele aparece como `ID_DO_EMBARQUE`
 curl -X PUT localhost:8000/shipments/ID_DO_EMBARQUE/container \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"container_number": "MSCU1234567"}'
+  -d '{"container_number": "MSCU1234566"}'
 ```
 
 **3.3 Enviar os documentos do embarque.** `POST /shipments/{id}/documents`, em `multipart/form-data`:

@@ -25,7 +25,7 @@ INSTRUCTIONS = [
     "importador, consignatário, navio, viagem, porto de origem e destino, datas, placa do veículo, "
     "número do BL e da nota fiscal e demais referências operacionais.",
     "Considere equivalentes valores que só diferem na unidade ou formatação "
-    "(ex.: '2.000 kg' e '2 t', 'MSCU 123456-7' e 'MSCU1234567'). Converta unidades antes de comparar.",
+    "(ex.: '2.000 kg' e '2 t', 'MSCU 123456-6' e 'MSCU1234566'). Converta unidades antes de comparar.",
     "Uma divergência só existe quando o mesmo campo tem valores incompatíveis em documentos diferentes. "
     "Para cada uma, cite o valor exato e um trecho curto de cada documento. "
     "Se o campo simplesmente não aparece em um documento, isso NÃO é divergência: registre em missing_fields. "

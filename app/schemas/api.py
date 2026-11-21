@@ -2,10 +2,21 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidatorFunctionWrapHandler,
+    field_validator,
+)
 
 from app.models import DocumentType, EvidenceType
 from app.schemas.analysis import AnalysisResult
+from app.services.container_number import ISO_STANDARD_CODE
+
+INVALID_DATE_DETAIL = "Informe uma data válida."
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -62,9 +73,13 @@ class UserOut(ORMModel):
 
 class ContainerIn(BaseModel):
     container_number: str = Field(
-        min_length=4, max_length=20, description="Espaços e hífens são removidos", examples=["MSCU 123456-7"]
+        min_length=4, max_length=20, description="Espaços e hífens são removidos", examples=["MSCU 123456-6"]
     )
-    iso_code: str | None = Field(default=None, examples=["22G1"])
+    iso_code: str | None = Field(
+        default=None,
+        description=f"Ignorado: o servidor sempre grava o código da norma ISO ({ISO_STANDARD_CODE})",
+        examples=[ISO_STANDARD_CODE],
+    )
     type: str | None = Field(default=None, examples=["Dry 20'"])
     owner: str | None = Field(default=None, examples=["MSC"])
 
@@ -89,6 +104,14 @@ class ShipmentIn(BaseModel):
         default=None, description="Não pode ser anterior a dispatched_at", examples=["2026-11-03T10:00:00Z"]
     )
     container: ContainerIn | None = None
+
+    @field_validator("dispatched_at", "expected_arrival", "expected_return", mode="wrap")
+    @classmethod
+    def report_invalid_date(cls, value: object, handler: ValidatorFunctionWrapHandler) -> object:
+        try:
+            return handler(value)
+        except ValidationError:
+            raise ValueError(INVALID_DATE_DETAIL) from None
 
     @field_validator("shipment_id_custom", mode="before")
     @classmethod

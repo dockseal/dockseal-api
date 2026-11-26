@@ -2,7 +2,7 @@
 
 API em FastAPI da **Dockseal: Plataforma Inteligente de Conformidade Portuária** (TCC — Ciência da Computação, UNIP Santos).
 
-O ponto central é um agente de IA (Agno + OpenAI) que lê um ou mais documentos portuários (Bill of Lading, Manifesto de Carga, Nota Fiscal, Ordem de Carregamento) e aponta as divergências entre eles. Por exemplo, um documento diz 2 toneladas e outro diz 10 toneladas. Para cada divergência, ele devolve uma sugestão de correção.
+O ponto central é um agente de IA (Agno + Claude) que lê um ou mais documentos portuários (Bill of Lading, Manifesto de Carga, Nota Fiscal, Ordem de Carregamento) e aponta as divergências entre eles. Por exemplo, um documento diz 2 toneladas e outro diz 10 toneladas. Para cada divergência, ele devolve uma sugestão de correção.
 
 > O agente **apenas lê e recomenda**. Ele nunca altera os documentos.
 
@@ -34,8 +34,8 @@ O ponto central é um agente de IA (Agno + OpenAI) que lê um ou mais documentos
 | Camada | Tecnologia |
 |---|---|
 | API | FastAPI (Python 3.13) |
-| Agente de IA | [Agno](https://docs.agno.com) com modelo da OpenAI (`gpt-4.1-mini`) |
-| OCR | Modelo de visão da OpenAI (`gpt-4.1`) para imagens, PDFs digitalizados e formulários preenchidos |
+| Agente de IA | [Agno](https://docs.agno.com) com o Claude, da Anthropic (`claude-opus-5-5`) |
+| OCR | Claude (`claude-opus-5-5`) para imagens, PDFs digitalizados e formulários preenchidos |
 | Banco de dados | SQLAlchemy 2 (SQLite por padrão; PostgreSQL opcional) |
 | Autenticação | JWT (PyJWT) + hash de senha Argon2 (pwdlib) |
 | Leitura de arquivos | pypdf (texto de PDF), pypdfium2 + Pillow (renderização para OCR) e python-docx (DOCX) |
@@ -45,7 +45,7 @@ O ponto central é um agente de IA (Agno + OpenAI) que lê um ou mais documentos
 
 - Python 3.13
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Uma chave de API da OpenAI, gerada em https://platform.openai.com/api-keys (a conta precisa ter créditos).
+- Uma chave de API da Anthropic, gerada em https://console.anthropic.com/settings/keys (a conta precisa ter créditos).
 
 ## Configuração
 
@@ -59,13 +59,13 @@ cp .env.example .env
 
 | Variável | Obrigatória | Descrição | Padrão |
 |---|---|---|---|
-| `OPENAI_API_KEY` | Sim | Chave da OpenAI, usada pelo agente e pelo OCR | — |
+| `ANTHROPIC_API_KEY` | Sim | Chave da Anthropic, usada pelo agente e pelo OCR | — |
 | `JWT_SECRET` | Sim (em produção) | Segredo para assinar os tokens de login | valor de desenvolvimento |
 | `DATABASE_URL` | Não | URL do banco | `sqlite:///./dockseal.db` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Não | Validade do token | `60` |
 | `CORS_ORIGINS` | Não | Origens do front-end liberadas (lista JSON) | `["http://localhost:5173","http://localhost:3000"]` |
-| `OPENAI_CHAT_MODEL` | Não | Modelo usado pelo agente | `gpt-4.1-mini` |
-| `OPENAI_OCR_MODEL` | Não | Modelo usado no OCR | `gpt-4.1` |
+| `ANTHROPIC_CHAT_MODEL` | Não | Modelo usado pelo agente | `claude-opus-5-5` |
+| `ANTHROPIC_OCR_MODEL` | Não | Modelo usado no OCR | `claude-opus-5-5` |
 
 Para gerar um `JWT_SECRET` fora do Docker:
 
@@ -134,7 +134,7 @@ Pré-requisito: Docker com Compose.
 cp .env.example .env
 ```
 
-**2. Preencher `OPENAI_API_KEY` e `JWT_SECRET`.** Gere o segredo com o Python da imagem, sem instalar nada na máquina. Na primeira vez o Compose constrói a API; o banco não sobe:
+**2. Preencher `ANTHROPIC_API_KEY` e `JWT_SECRET`.** Gere o segredo com o Python da imagem, sem instalar nada na máquina. Na primeira vez o Compose constrói a API; o banco não sobe:
 
 ```bash
 docker compose run --rm --no-deps dockseal-api python -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -459,8 +459,8 @@ As instruções do agente ficam em `app/agents/compliance_agent.py`.
 | `413` | Arquivo maior que 20 MB | Reduzir o arquivo |
 | `415` | Formato não suportado | Usar um dos [formatos aceitos](#2-análise-de-documentos-post-analysis) |
 | `422` | Arquivo vazio, sem texto, mais de 10 arquivos, `types` com quantidade diferente de `files`, ou embarque sem documentos | Ver a mensagem em `detail` |
-| `422` "OCR indisponível" | Imagem ou PDF escaneado enviado sem `OPENAI_API_KEY` | Configurar a chave no `.env` |
-| `502` | Falha na chamada à OpenAI (o motivo vem em `detail`) | Conferir a chave, os créditos da conta e o nome do modelo |
+| `422` "OCR indisponível" | Imagem ou PDF escaneado enviado sem `ANTHROPIC_API_KEY` | Configurar a chave no `.env` |
+| `502` | Falha na chamada à Anthropic (o motivo vem em `detail`) | Conferir a chave, os créditos da conta e o nome do modelo |
 
 ## Testes
 
@@ -468,7 +468,7 @@ As instruções do agente ficam em `app/agents/compliance_agent.py`.
 uv run pytest
 ```
 
-Os testes usam um banco em memória e um **agente simulado**, então não precisam de chave da OpenAI e não consomem créditos. Eles cobrem login, permissões, a análise de múltiplos arquivos (TXT e DOCX) e o fluxo completo de embarque → documentos → validação → alerta → auditoria.
+Os testes usam um banco em memória e um **agente simulado**, então não precisam de chave da Anthropic e não consomem créditos. Eles cobrem login, permissões, a análise de múltiplos arquivos (TXT e DOCX) e o fluxo completo de embarque → documentos → validação → alerta → auditoria.
 
 ## Estrutura do projeto
 

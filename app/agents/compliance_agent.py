@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
 from agno.run.base import RunStatus
 
 from app.core.config import get_settings
@@ -55,10 +55,13 @@ def build_compliance_agent() -> Agent:
     settings = get_settings()
     return Agent(
         name="Dockseal Compliance Agent",
-        model=OpenAIChat(
-            id=settings.openai_chat_model,
-            api_key=settings.openai_api_key,
-            temperature=0,
+        model=Claude(
+            id=settings.anthropic_chat_model,
+            api_key=settings.anthropic_api_key,
+            max_tokens=16000,
+            # Se o modelo recusar a requisição, a API refaz a chamada num modelo alternativo.
+            betas=["server-side-fallback-2026-07-01"],
+            request_params={"fallbacks": "default"},
         ),
         description=DESCRIPTION,
         instructions=INSTRUCTIONS,

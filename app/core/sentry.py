@@ -1,6 +1,6 @@
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
-from sentry_sdk.integrations.openai import OpenAIIntegration
+from sentry_sdk.integrations.anthropic import AnthropicIntegration
 
 from app.core.config import get_settings
 
@@ -98,8 +98,8 @@ def init_sentry() -> None:
             # Logs não viram breadcrumb nem evento: podem conter texto de documentos.
             # Os erros chegam ao Sentry pelas exceções, não pelos logs.
             LoggingIntegration(level=None, event_level=None),
-            # Mede as chamadas à OpenAI sem gravar prompts nem respostas.
-            OpenAIIntegration(include_prompts=False),
+            # Mede as chamadas à Anthropic sem gravar prompts nem respostas.
+            AnthropicIntegration(include_prompts=False),
         ],
         before_send=_scrub,
         before_send_transaction=_scrub,

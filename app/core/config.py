@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7
 
-    openai_api_key: str | None = None
-    openai_chat_model: str = "gpt-4.1-mini"
-    openai_ocr_model: str = "gpt-4.1"
+    anthropic_api_key: str | None = None
+    anthropic_chat_model: str = "claude-opus-5-5"
+    anthropic_ocr_model: str = "claude-opus-5-5"
 
     # Origens do front-end autorizadas a chamar a API pelo navegador (CORS).
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]

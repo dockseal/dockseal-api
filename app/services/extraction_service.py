@@ -108,8 +108,8 @@ class ExtractionService:
     def _split_into_strips(image: Image.Image) -> list[bytes]:
         """Divide a página em faixas horizontais com sobreposição.
 
-        No modo "high" a OpenAI reduz a imagem até o lado menor ter 768 px; numa página A4 inteira
-        a letra manuscrita fica pequena demais. Faixas largas e baixas são enviadas com ~2x a resolução.
+        O modelo reduz imagens grandes antes de lê-las; numa página A4 inteira a letra manuscrita
+        fica pequena demais. Faixas largas e baixas preservam mais resolução por linha de texto.
         Faixas em branco são descartadas.
         """
         gray = image.convert("L")
@@ -129,12 +129,12 @@ class ExtractionService:
 
     @staticmethod
     async def _ocr(content: bytes, mime_type: str) -> str:
-        """Transcreve imagens e PDFs digitalizados usando o modelo de visão da OpenAI."""
-        from openai import AsyncOpenAI, OpenAIError
+        """Transcreve imagens e PDFs digitalizados usando o modelo de visão do Claude."""
+        import anthropic
 
         settings = get_settings()
-        if not settings.openai_api_key:
-            raise ExtractionError("OCR indisponível: defina OPENAI_API_KEY para ler imagens e PDFs digitalizados")
+        if not settings.anthropic_api_key:
+            raise ExtractionError("OCR indisponível: defina ANTHROPIC_API_KEY para ler imagens e PDFs digitalizados")
 
         if mime_type == "application/pdf":
             pages = ExtractionService._render_pdf_pages(content)
@@ -149,19 +149,24 @@ class ExtractionService:
             message.append({"type": "text", "text": f"Página {number}:"})
             message += [
                 {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{base64.b64encode(strip).decode()}", "detail": "high"},
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/png", "data": base64.b64encode(strip).decode()},
                 }
                 for strip in ExtractionService._split_into_strips(page)
             ]
 
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         try:
-            response = await client.chat.completions.create(
-                model=settings.openai_ocr_model,
-                temperature=0,
+            response = await client.beta.messages.create(
+                model=settings.anthropic_ocr_model,
+                max_tokens=16000,
+                # Se o modelo recusar a requisição, a API refaz a chamada num modelo alternativo.
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
                 messages=[{"role": "user", "content": message}],
             )
-        except OpenAIError as exc:
+        except anthropic.APIError as exc:
             raise ExtractionError(f"Falha no OCR: {exc}") from exc
-        return response.choices[0].message.content or ""
+        if response.stop_reason == "refusal":
+            raise ExtractionError("Falha no OCR: o modelo recusou a transcrição")
+        return "".join(block.text for block in response.content if block.type == "text")

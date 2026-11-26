@@ -6,9 +6,9 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "agno>=3.1.1",
+    "anthropic>=2.14.0",
     "boto3>=1.43.123",
     "fastapi[standard]>=0.141.1",
-    "openai>=3.24.0",
     "pillow>=12.3.0",
     "psycopg[binary]>=3.3.6",
     "pwdlib[argon2]>=0.3.1",
